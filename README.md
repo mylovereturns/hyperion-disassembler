@@ -7,7 +7,8 @@ A native x86/x64 disassembler and binary analysis tool for Windows PE files. Bui
 
 Hyperion performs recursive descent disassembly, automatic function detection, control flow graph construction, cross-reference analysis, and basic decompilation — all parallelized across available cores using a task-based scheduler.
 
-![screenshot placeholder]
+<img width="3430" height="1367" alt="image" src="https://github.com/user-attachments/assets/aeba409d-9437-47cf-bc76-a648f32c1432" />
+
 
 ## Community
 
@@ -93,7 +94,7 @@ These mirror IDA defaults.
 Requires CMake 3.25+, vcpkg, and a C++20 compiler (MSVC 2022+ recommended).
 
 ```
-git clone --recursive https://github.com/user/hyperion
+git clone --recursive https://github.com/mylovereturns/hyperion-disassembler
 cd hyperion
 cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
 cmake --build build --config Release
