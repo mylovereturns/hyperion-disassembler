@@ -9,12 +9,15 @@
 
 namespace hype {
 
+class StackFrameView;
+
 class DisasmView {
 public:
     using NavCB = std::function<void(va_t)>;
 
     void set_data(AnalysisDB* db, PEImage* img) { db_ = db; img_ = img; dirty_ = true; }
     void set_nav(NavCB cb) { nav_ = std::move(cb); }
+    void set_stack_frame_view(StackFrameView* sfv) { sfv_ = sfv; }
     void goto_addr(va_t addr);
     void render();
     va_t cursor() const { return cursor_; }
@@ -34,6 +37,7 @@ private:
 
     AnalysisDB*       db_ = nullptr;
     PEImage*          img_ = nullptr;
+    StackFrameView*   sfv_ = nullptr;
     NavCB             nav_;
     va_t              cursor_ = 0;
     va_t              scroll_to_ = 0;

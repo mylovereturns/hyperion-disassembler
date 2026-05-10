@@ -47,6 +47,7 @@ std::string save_dialog() {
 App::App() : pool_(std::thread::hardware_concurrency()) {
     auto nav = [this](va_t a) { navigate_to(a); };
     dv_.set_nav(nav);
+    dv_.set_stack_frame_view(&sfv_);
     fp_.set_nav([this](va_t a) { navigate_to(a); sync_panels(a); });
     xp_.set_nav(nav);
     sp_.set_nav(nav);
@@ -91,6 +92,7 @@ int App::run() {
             ev_.set_data(img_.get());
             cgv_.set_data(&db);
             tp_.set_data(&db);
+            sfv_.set_data(&db);
             navigate_to(img_->entry);
             sync_panels(img_->entry);
             out_.log(fmt::format("Done: {} insns, {} funcs, {} xrefs, {} strings",
@@ -120,6 +122,7 @@ int App::run() {
         cgv_.render();
         tp_.render();
         diffv_.render();
+        sfv_.render();
 
         if (show_goto_)     show_goto_dlg();
         if (show_rename_)   show_rename_dlg();
@@ -187,6 +190,7 @@ void App::build_default_layout(ImGuiID dock_id) {
     ImGui::DockBuilderDockWindow("Search", bottom);
     ImGui::DockBuilderDockWindow("Entropy", bottom);
     ImGui::DockBuilderDockWindow("Diff View", bottom);
+    ImGui::DockBuilderDockWindow("Stack Frame", bottom);
 
     ImGui::DockBuilderFinish(dock_id);
 }
@@ -427,6 +431,7 @@ void App::sync_panels(va_t addr) {
         pv_.highlight_addr(addr);
         gv_.show_function(func);
         cgv_.show_function(func);
+        sfv_.set_function(func);
     }
     xp_.show_for(addr);
     hv_.sync_to(addr);
@@ -616,8 +621,11 @@ void App::show_goto_dlg() {
         bool go = ImGui::InputText("Address (hex)", goto_buf_, sizeof(goto_buf_),
             ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CharsHexadecimal);
         if (go || ImGui::Button("Go")) {
-            va_t a = std::strtoull(goto_buf_, nullptr, 16);
-            if (a) { navigate_to(a); sync_panels(a); }
+            if (goto_buf_[0]) {
+                va_t a = std::strtoull(goto_buf_, nullptr, 16);
+                navigate_to(a);
+                sync_panels(a);
+            }
             show_goto_ = false; goto_buf_[0] = 0;
             ImGui::CloseCurrentPopup();
         }

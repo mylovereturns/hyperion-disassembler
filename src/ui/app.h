@@ -21,6 +21,7 @@
 #include "ui/widgets/callgraph_view.h"
 #include "ui/widgets/types_panel.h"
 #include "ui/widgets/diff_view.h"
+#include "ui/widgets/stack_frame_view.h"
 #include <memory>
 #include <string>
 #include <deque>
@@ -84,6 +85,7 @@ private:
     CallGraphView    cgv_;
     TypesPanel       tp_;
     DiffView         diffv_;
+    StackFrameView   sfv_;
 
     std::unique_ptr<PEImage>   diff_img_;
     std::unique_ptr<Analyzer>  diff_analyzer_;

@@ -79,9 +79,10 @@ void CallGraphView::render() {
     ImGui::BeginChild("##callers", ImVec2(col_w, 0), true);
     ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "Callers (%zu)", callers_.size());
     ImGui::Separator();
-    for (auto& e : callers_) {
-        if (ImGui::Selectable(e.name.c_str()))
-            if (nav_) nav_(e.addr);
+    for (int i = 0; i < (int)callers_.size(); ++i) {
+        auto lbl = fmt::format("{}##{}", callers_[i].name, i);
+        if (ImGui::Selectable(lbl.c_str()))
+            if (nav_) nav_(callers_[i].addr);
     }
     ImGui::EndChild();
 
@@ -97,9 +98,10 @@ void CallGraphView::render() {
     ImGui::BeginChild("##callees", ImVec2(col_w, 0), true);
     ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.6f, 1.0f), "Callees (%zu)", callees_.size());
     ImGui::Separator();
-    for (auto& e : callees_) {
-        if (ImGui::Selectable(e.name.c_str()))
-            if (nav_) nav_(e.addr);
+    for (int i = 0; i < (int)callees_.size(); ++i) {
+        auto lbl = fmt::format("{}##c{}", callees_[i].name, i);
+        if (ImGui::Selectable(lbl.c_str()))
+            if (nav_) nav_(callees_[i].addr);
     }
     ImGui::EndChild();
 

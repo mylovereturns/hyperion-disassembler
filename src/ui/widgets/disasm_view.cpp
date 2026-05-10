@@ -1,4 +1,5 @@
 #include "disasm_view.h"
+#include "stack_frame_view.h"
 #include "ui/theme.h"
 #include <fmt/format.h>
 #include <algorithm>
@@ -136,16 +137,23 @@ void DisasmView::render() {
     float lh = ImGui::GetTextLineHeightWithSpacing();
     int total = static_cast<int>(addrs_.size());
 
+    ImGui::BeginChild("##dasm", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar);
+
     if (scroll_pending_) {
         auto it = std::lower_bound(addrs_.begin(), addrs_.end(), scroll_to_);
         if (it != addrs_.end()) {
             float target_y = static_cast<float>(it - addrs_.begin()) * lh;
-            ImGui::SetNextWindowScroll(ImVec2(-1, target_y - ImGui::GetContentRegionAvail().y * 0.3f));
+            float view_h = ImGui::GetContentRegionAvail().y;
+            ImGui::SetScrollY(std::max(0.f, target_y - view_h * 0.3f));
+        } else if (!addrs_.empty()) {
+            // address not found - scroll to nearest
+            it = std::lower_bound(addrs_.begin(), addrs_.end(), scroll_to_);
+            if (it != addrs_.begin()) --it;
+            float target_y = static_cast<float>(it - addrs_.begin()) * lh;
+            ImGui::SetScrollY(std::max(0.f, target_y - ImGui::GetContentRegionAvail().y * 0.3f));
         }
         scroll_pending_ = false;
     }
-
-    ImGui::BeginChild("##dasm", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar);
 
     ImGuiListClipper clip;
     clip.Begin(total, lh);
@@ -298,7 +306,8 @@ void DisasmView::render_line(int idx, const Insn& insn, float lh) {
             else
                 dl->AddText(ImVec2(x, y), col::imm(), insn.op_str.c_str());
         } else {
-            std::string ops = insn.op_str;
+            const StackFrame* frame = sfv_ ? sfv_->current_frame() : nullptr;
+            std::string ops = frame ? format_operand_with_vars(insn, frame) : insn.op_str;
             if (!use_hex) {
                 for (int k = 0; k < insn.op_count; ++k) {
                     if (insn.ops[k].type == OpType::Imm) {

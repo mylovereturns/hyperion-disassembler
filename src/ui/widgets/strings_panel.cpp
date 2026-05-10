@@ -18,11 +18,12 @@ void StringsPanel::render() {
         ImGui::TableSetupColumn("String");
         ImGui::TableHeadersRow();
 
-        for (auto& [addr, str] : db_->strings) {
+        for (int i = 0; i < (int)db_->strings.size(); ++i) {
+            auto& [addr, str] = db_->strings[i];
             if (!filt.empty() && str.find(filt) == std::string::npos) continue;
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            auto lbl = fmt::format("{:016X}", addr);
+            auto lbl = fmt::format("{:016X}##s{}", addr, i);
             if (ImGui::Selectable(lbl.c_str(), false, ImGuiSelectableFlags_SpanAllColumns))
                 if (nav_) nav_(addr);
             ImGui::TableNextColumn();
