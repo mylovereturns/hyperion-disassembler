@@ -60,10 +60,11 @@ void XrefsPanel::render_popup() {
                 ImGui::TableSetupColumn("Function", ImGuiTableColumnFlags_WidthFixed, 140);
                 ImGui::TableHeadersRow();
 
-                for (auto& x : it->second) {
+                for (int xi = 0; xi < (int)it->second.size(); ++xi) {
+                    auto& x = it->second[xi];
                     ImGui::TableNextRow();
                     ImGui::TableNextColumn();
-                    auto addr_s = fmt::format("{:016X}##xp{:X}", x.from, x.from);
+                    auto addr_s = fmt::format("{:016X}##xp{}", x.from, xi);
                     if (ImGui::Selectable(addr_s.c_str(), false, ImGuiSelectableFlags_SpanAllColumns)) {
                         if (nav_) nav_(x.from);
                         ImGui::CloseCurrentPopup();

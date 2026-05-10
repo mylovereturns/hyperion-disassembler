@@ -260,10 +260,17 @@ void App::render_dockspace() {
 
     if (busy_) {
         ImVec2 sz = vp->WorkSize;
-        ImGui::SetCursorPos(ImVec2(sz.x / 2 - 100, sz.y / 2 - 10));
-        ImGui::Text("Analyzing... %.0f%%", analyzer_ ? analyzer_->progress() * 100 : 0);
-        ImGui::SetCursorPos(ImVec2(sz.x / 2 - 100, sz.y / 2 + 10));
-        ImGui::ProgressBar(analyzer_ ? analyzer_->progress() : 0, ImVec2(200, 0));
+        ImVec2 popup_sz(300, 80);
+        ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + sz.x / 2 - popup_sz.x / 2,
+                                       vp->WorkPos.y + sz.y / 2 - popup_sz.y / 2));
+        ImGui::SetNextWindowSize(popup_sz);
+        ImGui::Begin("##analyzing", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse);
+        ImGui::Text("Analyzing...");
+        float prog = analyzer_ ? analyzer_->progress() : 0;
+        ImGui::ProgressBar(prog, ImVec2(-1, 0), fmt::format("{:.0f}%", prog * 100).c_str());
+        ImGui::TextDisabled("Please wait");
+        ImGui::End();
     }
     ImGui::End();
 }
@@ -400,6 +407,9 @@ void App::render_menubar() {
 void App::handle_keys() {
     auto& io = ImGui::GetIO();
     if (io.WantTextInput) return;
+
+    if (show_goto_ || show_rename_ || show_comment_ || show_rebase_)
+        return;
 
     if (ImGui::IsKeyPressed(ImGuiKey_G) && !io.KeyCtrl) show_goto_ = true;
     if (ImGui::IsKeyPressed(ImGuiKey_N) && !io.KeyCtrl) show_rename_ = true;
@@ -662,9 +672,15 @@ void App::rebase(va_t new_base) {
     xp_.set_img(img_.get());
     pv_.set_data(&db);
     ip_.set_data(img_.get());
+    ip_.set_db(&db);
     hv_.set_data(img_.get());
+    cgv_.set_data(&db);
+    sfv_.set_data(&db);
+    srch_.set_data(&db, img_.get());
+    ev_.set_data(img_.get());
 
     navigate_to(img_->entry);
+    sync_panels(img_->entry);
     out_.log(fmt::format("Rebased: 0x{:X} -> 0x{:X} (delta={:+})", old_base, new_base, delta));
 }
 
@@ -699,9 +715,10 @@ void App::nav_fwd() {
 }
 
 void App::show_goto_dlg() {
-    ImGui::OpenPopup("Go to");
-    if (ImGui::BeginPopupModal("Go to", &show_goto_, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::SetKeyboardFocusHere();
+    ImGui::SetNextWindowSize(ImVec2(350, 0), ImGuiCond_Once);
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::Begin("Go to###goto", &show_goto_, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
         bool go = ImGui::InputText("Address (hex)", goto_buf_, sizeof(goto_buf_),
             ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CharsHexadecimal);
         if (go || ImGui::Button("Go")) {
@@ -711,17 +728,17 @@ void App::show_goto_dlg() {
                 sync_panels(a);
             }
             show_goto_ = false; goto_buf_[0] = 0;
-            ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel")) { show_goto_ = false; ImGui::CloseCurrentPopup(); }
-        ImGui::EndPopup();
+        if (ImGui::Button("Cancel")) { show_goto_ = false; goto_buf_[0] = 0; }
     }
+    ImGui::End();
 }
 
 void App::show_rename_dlg() {
-    ImGui::OpenPopup("Rename");
-    if (ImGui::BeginPopupModal("Rename", &show_rename_, ImGuiWindowFlags_AlwaysAutoResize)) {
+    ImGui::SetNextWindowSize(ImVec2(400, 0), ImGuiCond_Once);
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::Begin("Rename###rename", &show_rename_, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
         va_t cur = dv_.cursor();
         ImGui::Text("Address: 0x%016llX", (unsigned long long)cur);
         if (analyzer_) {
@@ -730,7 +747,7 @@ void App::show_rename_dlg() {
                 ImGui::TextDisabled("Current: %s", nit->second.c_str());
         }
         ImGui::Separator();
-        ImGui::SetKeyboardFocusHere();
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
         bool go = ImGui::InputText("New name", rename_buf_, sizeof(rename_buf_), ImGuiInputTextFlags_EnterReturnsTrue);
         if (go || ImGui::Button("OK")) {
             if (analyzer_ && rename_buf_[0]) {
@@ -748,12 +765,11 @@ void App::show_rename_dlg() {
                 out_.log(fmt::format("Renamed 0x{:X} -> {}", cur, rename_buf_));
             }
             show_rename_ = false; rename_buf_[0] = 0;
-            ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel")) { show_rename_ = false; ImGui::CloseCurrentPopup(); }
-        ImGui::EndPopup();
+        if (ImGui::Button("Cancel")) { show_rename_ = false; rename_buf_[0] = 0; }
     }
+    ImGui::End();
 }
 
 void App::show_rebase_dlg() {
@@ -810,8 +826,9 @@ void App::show_rebase_dlg() {
 }
 
 void App::show_comment_dlg() {
-    ImGui::OpenPopup("Comment");
-    if (ImGui::BeginPopupModal("Comment", &show_comment_, ImGuiWindowFlags_AlwaysAutoResize)) {
+    ImGui::SetNextWindowSize(ImVec2(400, 0), ImGuiCond_Once);
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::Begin("Comment###comment", &show_comment_, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
         va_t cur = dv_.cursor();
         ImGui::Text("0x%016llX", (unsigned long long)cur);
         if (analyzer_) {
@@ -823,7 +840,7 @@ void App::show_comment_dlg() {
             }
         }
         ImGui::Separator();
-        ImGui::SetKeyboardFocusHere();
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
         bool go = ImGui::InputText("Comment", comment_buf_, sizeof(comment_buf_), ImGuiInputTextFlags_EnterReturnsTrue);
         if (go || ImGui::Button("OK")) {
             if (analyzer_) {
@@ -844,12 +861,11 @@ void App::show_comment_dlg() {
                 });
             }
             show_comment_ = false; comment_buf_[0] = 0;
-            ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel")) { show_comment_ = false; ImGui::CloseCurrentPopup(); }
-        ImGui::EndPopup();
+        if (ImGui::Button("Cancel")) { show_comment_ = false; comment_buf_[0] = 0; }
     }
+    ImGui::End();
 }
 
 void App::show_segments_dlg() {
@@ -929,7 +945,7 @@ void App::show_bookmarks_dlg() {
 }
 
 void App::show_sigs_dlg() {
-    ImGui::OpenPopup("Signature Libraries");
+    if (!ImGui::IsPopupOpen("Signature Libraries")) ImGui::OpenPopup("Signature Libraries");
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, {0.5f, 0.5f});
     ImGui::SetNextWindowSize({600, 450}, ImGuiCond_Appearing);
@@ -970,7 +986,7 @@ void App::show_sigs_dlg() {
 }
 
 void App::show_apply_type_dlg() {
-    ImGui::OpenPopup("Apply Type");
+    if (!ImGui::IsPopupOpen("Apply Type")) ImGui::OpenPopup("Apply Type");
     if (ImGui::BeginPopupModal("Apply Type", &show_apply_type_, ImGuiWindowFlags_AlwaysAutoResize)) {
         if (!analyzer_) { ImGui::EndPopup(); return; }
         va_t cur = dv_.cursor();

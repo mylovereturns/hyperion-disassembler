@@ -40,11 +40,13 @@ bool Renderer::init(int w, int h, const char* title) {
 
     // load Segoe UI as default, Consolas as monospace fallback
     ImFontConfig cfg;
-    cfg.OversampleH = 2;
+    cfg.OversampleH = 3;
     cfg.OversampleV = 1;
-    io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 15.0f, &cfg);
+    cfg.PixelSnapH = true;
+    io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 16.0f, &cfg);
     ImFontConfig mono_cfg;
-    mono_cfg.OversampleH = 2;
+    mono_cfg.OversampleH = 3;
+    mono_cfg.PixelSnapH = true;
     io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\consola.ttf", 14.0f, &mono_cfg);
 
     ImGui_ImplGlfw_InitForOpenGL(wnd_, true);

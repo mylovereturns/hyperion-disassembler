@@ -148,13 +148,13 @@ void StackFrameView::render() {
     }
 
     if (renaming_) {
-        ImGui::OpenPopup("Rename Var");
+        if (!ImGui::IsPopupOpen("Rename Var")) ImGui::OpenPopup("Rename Var");
         if (ImGui::BeginPopupModal("Rename Var", &renaming_, ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::Text("Offset: %+lld", (long long)rename_offset_);
-            ImGui::SetKeyboardFocusHere();
-            bool go = ImGui::InputText("Name", rename_buf_, sizeof(rename_buf_),
+            if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+            bool go = ImGui::InputText("Name##rv", rename_buf_, sizeof(rename_buf_),
                 ImGuiInputTextFlags_EnterReturnsTrue);
-            if (go || ImGui::Button("OK")) {
+            if (go || ImGui::Button("OK##rv")) {
                 if (rename_buf_[0])
                     frame->rename(rename_offset_, rename_buf_);
                 renaming_ = false;
@@ -162,7 +162,7 @@ void StackFrameView::render() {
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
-            if (ImGui::Button("Cancel")) { renaming_ = false; ImGui::CloseCurrentPopup(); }
+            if (ImGui::Button("Cancel##rv")) { renaming_ = false; ImGui::CloseCurrentPopup(); }
             ImGui::EndPopup();
         }
     }
