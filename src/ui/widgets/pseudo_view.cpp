@@ -12,6 +12,10 @@ void PseudoView::show_function(va_t entry) {
     auto it = db_->funcs.find(entry);
     if (it == db_->funcs.end()) return;
     if (it->second.blocks.empty()) return;
+    if (it->second.blocks.size() > 500) {
+        lines_.push_back({0, fmt::format("// {} - {} blocks (too complex)", it->second.name, it->second.blocks.size()), entry});
+        return;
+    }
     lines_ = dec_.decompile(it->second, *db_);
 }
 
