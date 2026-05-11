@@ -1,6 +1,7 @@
 #pragma once
 #include "core/loader/pe_loader.h"
 #include "core/disasm/disassembler.h"
+#include "core/disasm/capstone_disasm.h"
 #include "analysis_db.h"
 #include "signatures.h"
 #include "rtti.h"
@@ -56,8 +57,15 @@ private:
     bool in_section(va_t addr, const char* name) const;
     const Segment* section_for(va_t addr) const;
 
+    bool use_capstone() const {
+        return img_.arch != Arch::X86 && img_.arch != Arch::X64;
+    }
+    bool decode_insn(va_t addr, const u8* data, size_t len, Insn& out);
+    std::vector<Insn> decode_insn_range(va_t start, const u8* data, size_t len);
+
     PEImage&           img_;
     Disassembler       disasm_;
+    CapstoneDisasm     cap_disasm_;
     AnalysisDB         db_;
     WorkerPool&        pool_;
     TaskScheduler      sched_;

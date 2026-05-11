@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(Hyperion VERSION 0.1.4 LANGUAGES CXX)
+project(Hyperion VERSION 0.1.5 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -16,6 +16,7 @@ find_package(imgui CONFIG REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
 find_package(OpenGL REQUIRED)
 find_package(zydis CONFIG REQUIRED)
+find_package(capstone CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
 find_package(ZLIB REQUIRED)
@@ -38,6 +39,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     glfw
     OpenGL::GL
     Zydis::Zydis
+    capstone::capstone
     spdlog::spdlog
     fmt::fmt
     ZLIB::ZLIB
@@ -45,7 +47,11 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 )
 
 if(WIN32)
-    target_link_libraries(${PROJECT_NAME} PRIVATE comdlg32)
+    target_link_libraries(${PROJECT_NAME} PRIVATE dbghelp comdlg32)
+endif()
+
+if(APPLE)
+    target_link_libraries(${PROJECT_NAME} PRIVATE "-framework Cocoa" "-framework IOKit")
 endif()
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE

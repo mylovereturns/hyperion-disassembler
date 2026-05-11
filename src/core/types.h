@@ -17,7 +17,7 @@ using i64 = int64_t;
 using va_t = u64;
 constexpr va_t INVALID_VA = ~va_t(0);
 
-enum class Arch : u8 { X86, X64 };
+enum class Arch : u8 { X86, X64, ARM, ARM64, MIPS, PPC };
 
 struct Segment {
     std::string name;

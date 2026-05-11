@@ -8,6 +8,7 @@
     },
     "glfw3",
     "zydis",
+    "capstone",
     "spdlog",
     "fmt",
     "zlib",

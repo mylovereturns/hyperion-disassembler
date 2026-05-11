@@ -11,27 +11,53 @@ env:
 
 jobs:
   build:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
 
     steps:
     - uses: actions/checkout@v4
 
+    - name: Install Linux dependencies
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libgl1-mesa-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxext-dev libwayland-dev libxkbcommon-dev
+
     - name: Configure
-      run: cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+      run: cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=${{ runner.os == 'Windows' && 'C:/vcpkg/scripts/buildsystems/vcpkg.cmake' || '/usr/local/share/vcpkg/scripts/buildsystems/vcpkg.cmake' }} -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
 
     - name: Build
       run: cmake --build build --config ${{ env.BUILD_TYPE }}
 
-    - name: Hash
+    - name: Hash (Windows)
+      if: runner.os == 'Windows'
       run: |
         $hash = (Get-FileHash build/Release/Hyperion.exe -Algorithm SHA256).Hash
         echo "SHA256: $hash" | Tee-Object -FilePath build/Release/SHA256.txt
       shell: pwsh
 
-    - name: Upload artifact
+    - name: Upload artifact (Windows)
+      if: runner.os == 'Windows'
       uses: actions/upload-artifact@v4
       with:
-        name: Hyperion-x64
+        name: Hyperion-Windows-x64
         path: |
           build/Release/Hyperion.exe
           build/Release/SHA256.txt
+
+    - name: Upload artifact (Linux)
+      if: runner.os == 'Linux'
+      uses: actions/upload-artifact@v4
+      with:
+        name: Hyperion-Linux-x64
+        path: build/Hyperion
+
+    - name: Upload artifact (macOS)
+      if: runner.os == 'macOS'
+      uses: actions/upload-artifact@v4
+      with:
+        name: Hyperion-macOS
+        path: build/Hyperion

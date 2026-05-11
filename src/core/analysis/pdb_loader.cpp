@@ -5,7 +5,6 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <dbghelp.h>
-#pragma comment(lib, "dbghelp.lib")
 #endif
 
 namespace hype {

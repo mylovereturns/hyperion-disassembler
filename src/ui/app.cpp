@@ -1,6 +1,7 @@
-﻿#include "app.h"
+#include "app.h"
 #include "ui/theme.h"
 #include "core/analysis/packer_detect.h"
+#include "core/loader/dotnet_loader.h"
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <spdlog/spdlog.h>
@@ -22,7 +23,7 @@ std::string open_dialog() {
     char path[MAX_PATH] = {};
     OPENFILENAMEA ofn{};
     ofn.lStructSize = sizeof(ofn);
-    ofn.lpstrFilter = "PE Files\0*.exe;*.dll;*.sys\0All\0*.*\0";
+    ofn.lpstrFilter = "All Binaries\0*.exe;*.dll;*.sys;*.so;*.dylib;*.elf;*.bin;*.o\0All Files\0*.*\0";
     ofn.lpstrFile = path;
     ofn.nMaxFile = MAX_PATH;
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
@@ -36,7 +37,7 @@ std::string save_dialog() {
     char path[MAX_PATH] = {};
     OPENFILENAMEA ofn{};
     ofn.lStructSize = sizeof(ofn);
-    ofn.lpstrFilter = "PE Files\0*.exe;*.dll;*.sys\0All\0*.*\0";
+    ofn.lpstrFilter = "All Binaries\0*.exe;*.dll;*.sys;*.so;*.dylib;*.elf;*.bin;*.o\0All Files\0*.*\0";
     ofn.lpstrFile = path;
     ofn.nMaxFile = MAX_PATH;
     ofn.Flags = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
@@ -51,6 +52,12 @@ App::App() : pool_(std::thread::hardware_concurrency()) {
     dv_.set_nav(nav);
     dv_.set_undo(&undo_);
     dv_.set_stack_frame_view(&sfv_);
+    dv_.set_sig_cb([this](va_t a) {
+        va_t func = find_func_for(a);
+        if (func) sigmaker_.generate_for_function(func);
+        else sigmaker_.generate_for_range(a, 64);
+        sigmaker_.visible() = true;
+    });
     fp_.set_nav([this](va_t a) { navigate_to(a); sync_panels(a); });
     xp_.set_nav(nav);
     sp_.set_nav(nav);
@@ -122,6 +129,8 @@ int App::run() {
             lua_.init(&analyzer_->db(), img_.get());
             lua_.set_navigate_cb([this](va_t a) { navigate_to(a); sync_panels(a); });
             scriptc_.set_engine(&lua_);
+            sigmaker_.set_data(&db, img_.get());
+            sigmaker_.set_nav([this](va_t a) { navigate_to(a); sync_panels(a); });
         }
 
         if (diff_done_.exchange(false)) {
@@ -151,6 +160,7 @@ int App::run() {
         pehv_.render();
         clsv_.render();
         scriptc_.render();
+        sigmaker_.render();
 
         autosave_tick();
 
@@ -171,12 +181,11 @@ int App::run() {
 }
 
 void App::open_file(const char* path) {
-    if (busy_) return;  // don't allow opening while analyzing
+    if (busy_) return;
 
     out_.log(fmt::format("Loading: {}", path));
     file_path_ = path;
 
-    // clear all widget references to old data
     dv_.set_data(nullptr, nullptr);
     hv_.set_data(nullptr);
     pv_.set_data(nullptr);
@@ -192,8 +201,66 @@ void App::open_file(const char* path) {
     tp_.set_data(nullptr);
     sfv_.set_data(nullptr);
     pehv_.set_data(nullptr);
+    sigmaker_.set_data(nullptr, nullptr);
 
-    auto result = loader_.load(path);
+    // detect file format by magic bytes
+    std::ifstream probe(path, std::ios::binary);
+    if (!probe) { out_.log("ERROR: cannot open file"); return; }
+    u8 magic_bytes[4] = {};
+    probe.read(reinterpret_cast<char*>(magic_bytes), 4);
+    probe.close();
+
+    u32 magic = 0;
+    std::memcpy(&magic, magic_bytes, 4);
+
+    std::optional<PEImage> result;
+    if (magic_bytes[0] == 'M' && magic_bytes[1] == 'Z') {
+        result = loader_.load(path);
+        // check if .NET
+        if (result) {
+            DotNetLoader dnl;
+            if (dnl.detect(*result)) {
+                img_ = std::make_unique<PEImage>(std::move(*result));
+                dnl.load(*img_);
+                out_.log(fmt::format(".NET binary: {} types, {} methods",
+                    dnl.image().types.size(), dnl.image().methods.size()));
+                // populate DB with IL methods instead of running native analysis
+                auto& db = const_cast<AnalysisDB&>(analyzer_ ? analyzer_->db() : *(new AnalysisDB()));
+                // create a minimal analyzer just for the DB
+                busy_ = false;
+                analysis_done_ = false;
+                // use dotnet data directly
+                static AnalysisDB* static_db = nullptr;
+                if (static_db) delete static_db;
+                static_db = new AnalysisDB();
+                static_db->image_base = img_->base;
+                dnl.populate_db(*static_db, *img_);
+                analyzer_ = nullptr;
+                dv_.set_data(static_db, img_.get());
+                fp_.set_data(static_db);
+                sp_.set_data(static_db);
+                xp_.set_data(static_db);
+                gv_.set_data(static_db);
+                pv_.set_data(static_db);
+                cgv_.set_data(static_db);
+                srch_.set_data(static_db, img_.get());
+                hv_.set_data(img_.get());
+                ev_.set_data(img_.get());
+                ip_.set_data(img_.get());
+                ip_.set_db(static_db);
+                out_.log(fmt::format("Done: {} IL methods loaded", static_db->funcs.size()));
+                if (!static_db->funcs.empty())
+                    navigate_to(static_db->funcs.begin()->second.entry);
+                return;
+            }
+        }
+    } else if (magic == 0x464C457F) {
+        result = elf_loader_.load(path);
+    } else {
+        out_.log("ERROR: unsupported file format (expected PE or ELF)");
+        return;
+    }
+
     if (!result) { out_.log("ERROR: load failed"); return; }
 
     img_ = std::make_unique<PEImage>(std::move(*result));
@@ -208,8 +275,19 @@ void App::open_file(const char* path) {
         out_.log("[!] Analysis may be incomplete - consider unpacking first");
     }
 
+    auto arch_str = [](Arch a) -> const char* {
+        switch (a) {
+        case Arch::X86:   return "x86";
+        case Arch::X64:   return "x64";
+        case Arch::ARM:   return "ARM";
+        case Arch::ARM64: return "ARM64";
+        case Arch::MIPS:  return "MIPS";
+        case Arch::PPC:   return "PPC";
+        }
+        return "?";
+    };
     out_.log(fmt::format("Base: 0x{:X}  Entry: 0x{:X}  Arch: {}",
-        img_->base, img_->entry, img_->arch == Arch::X64 ? "x64" : "x86"));
+        img_->base, img_->entry, arch_str(img_->arch)));
     out_.log(fmt::format("Sections: {}  Imports: {}  Exports: {}",
         img_->segments.size(), img_->imports.size(), img_->exports.size()));
 
@@ -380,6 +458,8 @@ void App::render_menubar() {
             if (ImGui::MenuItem("Bookmarks", "Ctrl+M")) show_bookmarks_ = true;
             if (ImGui::MenuItem("Signatures", nullptr, false, analyzer_ != nullptr)) show_sigs_ = true;
             if (ImGui::MenuItem("Script Console", nullptr, false, true)) {}
+            if (ImGui::MenuItem("SigMaker", "Ctrl+Shift+S", false, analyzer_ != nullptr))
+                sigmaker_.visible() = true;
             ImGui::Separator();
             if (ImGui::BeginMenu("Theme")) {
                 if (ImGui::MenuItem("Binary Ninja", nullptr, g_theme == Theme::BinaryNinja)) {
@@ -489,7 +569,7 @@ void App::handle_keys() {
         auto p = open_dialog();
         if (!p.empty()) open_file(p.c_str());
     }
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S) && img_ && analyzer_) {
+    if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S) && img_ && analyzer_) {
         auto pp = std::filesystem::path(file_path_).replace_extension(".hdb");
         database_.save(pp, *img_, analyzer_->db());
         out_.log("Saved: " + pp.string());
@@ -504,6 +584,11 @@ void App::handle_keys() {
         if (undo_.can_redo()) { auto d = undo_.redo(); out_.log("Redo: " + d); }
     }
     if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_B)) srch_.open_binary();
+    if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S) && analyzer_) {
+        va_t func = find_func_for(dv_.cursor());
+        if (func) sigmaker_.generate_for_function(func);
+        sigmaker_.visible() = true;
+    }
     if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) nav_back();
     if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_RightArrow)) nav_fwd();
 

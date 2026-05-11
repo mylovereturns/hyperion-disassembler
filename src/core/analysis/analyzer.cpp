@@ -10,7 +10,8 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <dbghelp.h>
-#pragma comment(lib, "dbghelp.lib")
+#else
+#include <cxxabi.h>
 #endif
 
 namespace hype {
@@ -26,8 +27,17 @@ std::string demangle(const std::string& name) {
         if (result > 0)
             return buf;
     }
+#else
+    if (name.size() > 2 && name[0] == '_' && name[1] == 'Z') {
+        int status = 0;
+        char* demangled = abi::__cxa_demangle(name.c_str(), nullptr, nullptr, &status);
+        if (status == 0 && demangled) {
+            std::string result(demangled);
+            std::free(demangled);
+            return result;
+        }
+    }
 #endif
-    // strip leading underscore for cdecl names
     if (name.size() > 1 && name[0] == '_' && name[1] != '_')
         return name.substr(1);
     return name;
@@ -37,6 +47,7 @@ std::string demangle(const std::string& name) {
 Analyzer::Analyzer(PEImage& img, WorkerPool& pool)
     : img_(img), pool_(pool), sched_(pool) {
     disasm_.set_arch(img.arch);
+    cap_disasm_.set_arch(img.arch);
     db_.image_base = img.base;
 }
 
@@ -170,7 +181,7 @@ void Analyzer::linear_sweep() {
             continue;
         }
         futures.push_back(pool_.submit([this, &seg]() {
-            return disasm_.decode_range(seg.va, seg.data.data(), seg.data.size());
+            return decode_insn_range(seg.va, seg.data.data(), seg.data.size());
         }));
     }
     for (auto& f : futures) {
@@ -236,7 +247,7 @@ void Analyzer::descend(va_t addr, std::unordered_set<va_t>& visited) {
         size_t off = 0;
         while (off < max_len) {
             Insn insn{};
-            if (!disasm_.decode(cur + off, ptr + off, max_len - off, insn))
+            if (!decode_insn(cur + off, ptr + off, max_len - off, insn))
                 break;
             db_.insns[insn.addr] = insn;
             off += insn.len;
@@ -581,7 +592,7 @@ void Analyzer::detect_vtables() {
 
         const u8* data = seg.data.data();
         size_t sz = seg.data.size();
-        size_t ptr_sz = (img_.arch == Arch::X64) ? 8 : 4;
+        size_t ptr_sz = (img_.arch == Arch::X64 || img_.arch == Arch::ARM64 || img_.arch == Arch::PPC) ? 8 : 4;
 
         for (size_t i = 0; i + ptr_sz * 2 <= sz; i += ptr_sz) {
             // need at least 2 consecutive code pointers to consider it a vtable
@@ -670,7 +681,7 @@ void Analyzer::apply_names() {
             fit->second.name = demangled;
     }
 
-    DataSize ptr_size = (img_.arch == Arch::X64) ? DataSize::Qword : DataSize::Dword;
+    DataSize ptr_size = (img_.arch == Arch::X64 || img_.arch == Arch::ARM64 || img_.arch == Arch::PPC) ? DataSize::Qword : DataSize::Dword;
     for (auto& imp : img_.imports) {
         db_.insns.erase(imp.iat_addr);
         db_.data_items[imp.iat_addr] = {imp.iat_addr, ptr_size, DataStyle::Import, false};
@@ -776,7 +787,7 @@ void Analyzer::detect_tail_calls() {
 }
 
 void Analyzer::detect_calling_conventions() {
-    bool is_x64 = (img_.arch == Arch::X64);
+    bool is_x64 = (img_.arch == Arch::X64 || img_.arch == Arch::ARM64 || img_.arch == Arch::PPC);
 
     for (auto& [entry, func] : db_.funcs) {
         if (is_x64) {
@@ -853,7 +864,7 @@ void Analyzer::propagate_dataflow() {
                         const u8* ptr = va_to_ptr(effective, &max_len);
                         if (ptr && max_len >= 8) {
                             va_t target = 0;
-                            std::memcpy(&target, ptr, (img_.arch == Arch::X64) ? 8 : 4);
+                            std::memcpy(&target, ptr, (img_.arch == Arch::X64 || img_.arch == Arch::ARM64 || img_.arch == Arch::PPC) ? 8 : 4);
                             if (is_code_addr(target)) {
                                 db_.resolved_indirect[insn.addr] = target;
                                 db_.add_xref({insn.addr, target, XrefType::CodeCall});
@@ -1007,8 +1018,8 @@ void Analyzer::populate_data_sections() {
     for (auto& imp : img_.imports)
         iat_addrs.insert(imp.iat_addr);
 
-    size_t ptr_sz = (img_.arch == Arch::X64) ? 8 : 4;
-    DataSize ds = (img_.arch == Arch::X64) ? DataSize::Qword : DataSize::Dword;
+    size_t ptr_sz = (img_.arch == Arch::X64 || img_.arch == Arch::ARM64 || img_.arch == Arch::PPC) ? 8 : 4;
+    DataSize ds = (img_.arch == Arch::X64 || img_.arch == Arch::ARM64 || img_.arch == Arch::PPC) ? DataSize::Qword : DataSize::Dword;
     u32 defined = 0;
 
     for (auto& seg : img_.segments) {
@@ -1219,6 +1230,18 @@ void Analyzer::propagate_interproc_types() {
     }
 
     spdlog::info("interproc: propagated {} function signatures", propagated + (u32)db_.signatures.size());
+}
+
+bool Analyzer::decode_insn(va_t addr, const u8* data, size_t len, Insn& out) {
+    if (use_capstone())
+        return cap_disasm_.decode(addr, data, len, out);
+    return disasm_.decode(addr, data, len, out);
+}
+
+std::vector<Insn> Analyzer::decode_insn_range(va_t start, const u8* data, size_t len) {
+    if (use_capstone())
+        return cap_disasm_.decode_range(start, data, len);
+    return disasm_.decode_range(start, data, len);
 }
 
 }

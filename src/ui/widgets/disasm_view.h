@@ -16,9 +16,11 @@ class StackFrameView;
 class DisasmView {
 public:
     using NavCB = std::function<void(va_t)>;
+    using SigCB = std::function<void(va_t)>;
 
     void set_data(AnalysisDB* db, PEImage* img) { db_ = db; img_ = img; dirty_ = true; }
     void set_nav(NavCB cb) { nav_ = std::move(cb); }
+    void set_sig_cb(SigCB cb) { sig_cb_ = std::move(cb); }
     void set_undo(UndoManager* u) { undo_ = u; }
     void set_stack_frame_view(StackFrameView* sfv) { sfv_ = sfv; }
     void goto_addr(va_t addr);
@@ -44,6 +46,7 @@ private:
     StackFrameView*   sfv_ = nullptr;
     UndoManager*      undo_ = nullptr;
     NavCB             nav_;
+    SigCB             sig_cb_;
     va_t              cursor_ = 0;
     va_t              scroll_to_ = 0;
     bool              scroll_pending_ = false;

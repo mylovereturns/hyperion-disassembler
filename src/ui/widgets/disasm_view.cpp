@@ -713,6 +713,9 @@ void DisasmView::render_line(int idx, const Insn& insn, float lh) {
         if (ImGui::MenuItem("Copy address")) {
             ImGui::SetClipboardText(addr_s.c_str());
         }
+        if (ImGui::MenuItem("Generate Signature", "Ctrl+Shift+S")) {
+            if (sig_cb_) sig_cb_(insn.addr);
+        }
         if (ImGui::MenuItem("Copy line")) {
             auto full = fmt::format("{} {} {}", addr_s, insn.mnemonic, insn.op_str);
             ImGui::SetClipboardText(full.c_str());

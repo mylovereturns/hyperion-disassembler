@@ -1,5 +1,7 @@
 #pragma once
 #include "core/loader/pe_loader.h"
+#include "core/loader/elf_loader.h"
+#include "core/loader/macho_loader.h"
 #include "core/analysis/analyzer.h"
 #include "core/analysis/bindiff.h"
 #include "core/analysis/packer_detect.h"
@@ -27,6 +29,7 @@
 #include "ui/widgets/stack_frame_view.h"
 #include "ui/widgets/pe_header_view.h"
 #include "ui/widgets/script_console.h"
+#include "ui/widgets/sigmaker.h"
 #include "scripting/lua_engine.h"
 #include <memory>
 #include <string>
@@ -76,6 +79,8 @@ private:
     Renderer         renderer_;
     WorkerPool       pool_;
     PELoader         loader_;
+    ELFLoader        elf_loader_;
+    MachOLoader      macho_loader_;
     Database         database_;
     IDAExport        ida_exp_;
     UndoManager      undo_;
@@ -101,6 +106,7 @@ private:
     PEHeaderView     pehv_;
     ClassesView      clsv_;
     ScriptConsole    scriptc_;
+    SigMaker         sigmaker_;
 
     LuaEngine        lua_;
     PDBLoader        pdb_;

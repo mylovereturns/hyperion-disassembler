@@ -38,16 +38,30 @@ bool Renderer::init(int w, int h, const char* title) {
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = "hyperion_layout.ini";
 
-    // load Segoe UI as default, Consolas as monospace fallback
     ImFontConfig cfg;
     cfg.OversampleH = 3;
     cfg.OversampleV = 1;
     cfg.PixelSnapH = true;
-    io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 16.0f, &cfg);
     ImFontConfig mono_cfg;
     mono_cfg.OversampleH = 3;
     mono_cfg.PixelSnapH = true;
+
+#ifdef _WIN32
+    io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 16.0f, &cfg);
     io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\consola.ttf", 14.0f, &mono_cfg);
+#elif defined(__APPLE__)
+    if (!io.Fonts->AddFontFromFileTTF("/System/Library/Fonts/SFNSMono.ttf", 15.0f, &cfg))
+        if (!io.Fonts->AddFontFromFileTTF("/System/Library/Fonts/Menlo.ttc", 15.0f, &cfg))
+            io.Fonts->AddFontDefault(&cfg);
+    if (!io.Fonts->AddFontFromFileTTF("/System/Library/Fonts/SFNSMono.ttf", 14.0f, &mono_cfg))
+        if (!io.Fonts->AddFontFromFileTTF("/System/Library/Fonts/Menlo.ttc", 14.0f, &mono_cfg))
+            io.Fonts->AddFontDefault(&mono_cfg);
+#else
+    if (!io.Fonts->AddFontFromFileTTF("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 15.0f, &cfg))
+        io.Fonts->AddFontDefault(&cfg);
+    if (!io.Fonts->AddFontFromFileTTF("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 14.0f, &mono_cfg))
+        io.Fonts->AddFontDefault(&mono_cfg);
+#endif
 
     ImGui_ImplGlfw_InitForOpenGL(wnd_, true);
     ImGui_ImplOpenGL3_Init("#version 330");
@@ -64,6 +78,12 @@ void Renderer::shutdown() {
 
 bool Renderer::begin_frame() {
     glfwPollEvents();
+    int w, h;
+    glfwGetFramebufferSize(wnd_, &w, &h);
+    if (w == 0 || h == 0) {
+        glfwWaitEvents();
+        return false;
+    }
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
@@ -74,6 +94,7 @@ void Renderer::end_frame() {
     ImGui::Render();
     int dw, dh;
     glfwGetFramebufferSize(wnd_, &dw, &dh);
+    if (dw == 0 || dh == 0) return;
     glViewport(0, 0, dw, dh);
     glClearColor(0.08f, 0.08f, 0.09f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
