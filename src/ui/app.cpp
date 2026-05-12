@@ -31,6 +31,32 @@ std::string open_dialog() {
     ofn.nMaxFile = MAX_PATH;
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
     if (GetOpenFileNameA(&ofn)) return path;
+#elif defined(__APPLE__)
+    FILE* f = popen("osascript -e 'POSIX path of (choose file with prompt \"Open Binary\")'", "r");
+    if (f) {
+        char buf[1024] = {};
+        if (fgets(buf, sizeof(buf), f)) {
+            pclose(f);
+            std::string result(buf);
+            while (!result.empty() && (result.back() == '\n' || result.back() == '\r'))
+                result.pop_back();
+            return result;
+        }
+        pclose(f);
+    }
+#else
+    FILE* f = popen("zenity --file-selection --title='Open Binary' 2>/dev/null || kdialog --getopenfilename . 2>/dev/null", "r");
+    if (f) {
+        char buf[1024] = {};
+        if (fgets(buf, sizeof(buf), f)) {
+            pclose(f);
+            std::string result(buf);
+            while (!result.empty() && (result.back() == '\n' || result.back() == '\r'))
+                result.pop_back();
+            return result;
+        }
+        pclose(f);
+    }
 #endif
     return {};
 }
@@ -45,6 +71,32 @@ std::string save_dialog() {
     ofn.nMaxFile = MAX_PATH;
     ofn.Flags = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
     if (GetSaveFileNameA(&ofn)) return path;
+#elif defined(__APPLE__)
+    FILE* f = popen("osascript -e 'POSIX path of (choose file name with prompt \"Save As\")'", "r");
+    if (f) {
+        char buf[1024] = {};
+        if (fgets(buf, sizeof(buf), f)) {
+            pclose(f);
+            std::string result(buf);
+            while (!result.empty() && (result.back() == '\n' || result.back() == '\r'))
+                result.pop_back();
+            return result;
+        }
+        pclose(f);
+    }
+#else
+    FILE* f = popen("zenity --file-selection --save --title='Save As' 2>/dev/null || kdialog --getsavefilename . 2>/dev/null", "r");
+    if (f) {
+        char buf[1024] = {};
+        if (fgets(buf, sizeof(buf), f)) {
+            pclose(f);
+            std::string result(buf);
+            while (!result.empty() && (result.back() == '\n' || result.back() == '\r'))
+                result.pop_back();
+            return result;
+        }
+        pclose(f);
+    }
 #endif
     return {};
 }
