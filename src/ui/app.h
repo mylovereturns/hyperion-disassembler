@@ -79,6 +79,7 @@ private:
     void render_nav_band();
     void rebuild_nav_band();
     void render_bg_image();
+    void render_plugin_manager();
 
     Renderer         renderer_;
     WorkerPool       pool_;
@@ -130,6 +131,7 @@ private:
     bool             show_bookmarks_ = false;
     bool             show_sigs_ = false;
     bool             show_apply_type_ = false;
+    bool             show_plugin_manager_ = false;
     bool             layout_built_ = false;
     char             goto_buf_[64] = {};
     char             rename_buf_[256] = {};

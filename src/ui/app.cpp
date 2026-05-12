@@ -149,6 +149,18 @@ int App::run() {
     out_.log("Hyperion v" HYPERION_VERSION " ready");
     out_.log("Drop a PE file or use File > Open (Ctrl+O)");
 
+    // Load plugins from plugins/ dir next to the executable (main thread, pre-loop)
+    {
+        auto plugin_dir = std::filesystem::path("plugins");
+        lua_.load_plugins(plugin_dir);
+        auto& loaded = lua_.plugins();
+        if (!loaded.empty()) {
+            int ok = 0, bad = 0;
+            for (auto& p : loaded) (p.error ? bad : ok)++;
+            out_.log(fmt::format("Plugins: {} loaded, {} error(s)", ok, bad));
+        }
+    }
+
     while (!renderer_.should_close()) {
         renderer_.begin_frame();
 
@@ -196,6 +208,8 @@ int App::run() {
             sigmaker_.set_data(&db, img_.get());
             sigmaker_.set_nav([this](va_t a) { navigate_to(a); sync_panels(a); });
             rebuild_nav_band();
+            // Fire on_analysis_complete plugin callbacks
+            lua_.run_analysis_complete_callbacks();
         }
 
         if (diff_done_.exchange(false)) {
@@ -227,6 +241,8 @@ int App::run() {
         scriptc_.render();
         sigmaker_.render();
         settings_panel_.render();
+
+        if (show_plugin_manager_) render_plugin_manager();
 
         if (settings_panel_.theme_changed()) {
             auto& ct = settings_panel_.custom_theme();
@@ -645,6 +661,46 @@ void App::render_menubar() {
             ImGui::EndMenu();
         }
 
+        // ---- Plugins menu ----
+        if (ImGui::BeginMenu("Plugins")) {
+            if (ImGui::MenuItem("Plugin Manager..."))
+                show_plugin_manager_ = true;
+            ImGui::Separator();
+            auto& plgs = lua_.plugins();
+            if (plgs.empty()) {
+                ImGui::TextDisabled("No plugins loaded");
+                ImGui::TextDisabled("Place .lua files in plugins/");
+            }
+            for (int pi = 0; pi < static_cast<int>(plgs.size()); ++pi) {
+                auto& plg = plgs[static_cast<size_t>(pi)];
+                if (plg.error) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.4f, 0.4f, 1.f));
+                    ImGui::TextDisabled("[!] %s", plg.name.c_str());
+                    ImGui::PopStyleColor();
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s", plg.error_msg.c_str());
+                    continue;
+                }
+                if (plg.items.size() == 1) {
+                    // Single action — flat menu item labelled by the action
+                    if (ImGui::MenuItem(plg.items[0].label.c_str()))
+                        lua_.invoke_menu_item(pi, 0);
+                } else if (!plg.items.empty()) {
+                    // Multiple actions — submenu labelled by the plugin name
+                    if (ImGui::BeginMenu(plg.name.c_str())) {
+                        for (int ii = 0; ii < static_cast<int>(plg.items.size()); ++ii)
+                            if (ImGui::MenuItem(plg.items[static_cast<size_t>(ii)].label.c_str()))
+                                lua_.invoke_menu_item(pi, ii);
+                        ImGui::EndMenu();
+                    }
+                } else {
+                    // Plugin registered but added no menu items
+                    ImGui::TextDisabled("%s", plg.name.c_str());
+                }
+            }
+            ImGui::EndMenu();
+        }
+
         float w = ImGui::GetWindowWidth();
         if (busy_) {
             ImGui::SameLine(w - 120);
@@ -749,6 +805,9 @@ void App::handle_keys() {
 
     if (ImGui::IsKeyPressed(ImGuiKey_Tab) && !io.KeyCtrl)
         sync_panels(dv_.cursor());
+
+    // Plugin hotkeys (checked last, after built-in keys)
+    lua_.check_hotkeys();
 
     if (kb.check("decompile")) {
         va_t func = find_func_for(dv_.cursor());
@@ -1648,4 +1707,67 @@ void App::export_asm() {
     out_.log(fmt::format("Exported: {}", p.string()));
 }
 
+void App::render_plugin_manager() {
+    ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Plugin Manager", &show_plugin_manager_)) {
+        ImGui::End();
+        return;
+    }
+
+    auto& plgs = lua_.plugins();
+
+    ImGui::TextDisabled("Plugins directory: plugins/  (%d loaded)", static_cast<int>(plgs.size()));
+    ImGui::Separator();
+
+    if (plgs.empty()) {
+        ImGui::TextDisabled("No plugins found.");
+        ImGui::TextDisabled("Place .lua files in the plugins/ directory next to the executable.");
+    } else {
+        ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                                ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
+        if (ImGui::BeginTable("##plugins_tbl", 4, flags, ImVec2(0, -30))) {
+            ImGui::TableSetupScrollFreeze(0, 1);
+            ImGui::TableSetupColumn("Name",    ImGuiTableColumnFlags_WidthStretch, 0.20f);
+            ImGui::TableSetupColumn("Description", ImGuiTableColumnFlags_WidthStretch, 0.40f);
+            ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 60.f);
+            ImGui::TableSetupColumn("Status",  ImGuiTableColumnFlags_WidthFixed, 120.f);
+            ImGui::TableHeadersRow();
+
+            for (int pi = 0; pi < static_cast<int>(plgs.size()); ++pi) {
+                auto& plg = plgs[static_cast<size_t>(pi)];
+                ImGui::TableNextRow();
+
+                // Name
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted(plg.name.c_str());
+
+                // Description
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextUnformatted(plg.desc.empty() ? "—" : plg.desc.c_str());
+
+                // Action count
+                ImGui::TableSetColumnIndex(2);
+                ImGui::Text("%d", static_cast<int>(plg.items.size()));
+
+                // Status
+                ImGui::TableSetColumnIndex(3);
+                if (plg.error) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.4f, 0.4f, 1.f));
+                    ImGui::TextUnformatted("Error");
+                    ImGui::PopStyleColor();
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s", plg.error_msg.c_str());
+                } else {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 1.f, 0.5f, 1.f));
+                    ImGui::TextUnformatted("OK");
+                    ImGui::PopStyleColor();
+                }
+            }
+            ImGui::EndTable();
+        }
+    }
+
+    ImGui::End();
 }
+
+} // namespace hype

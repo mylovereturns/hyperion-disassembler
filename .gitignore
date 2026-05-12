@@ -25,3 +25,5 @@ Release/
 *.dll
 hyperion_layout.ini
 imgui.ini
+CONTRIBUTING.md
+SKILL.md
