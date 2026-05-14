@@ -402,11 +402,7 @@ void App::open_file(const char* path) {
         }
     } else if (magic == 0x464C457F) {
         result = elf_loader_.load(path);
-    } else if (magic == 0xFEEDFACE || magic == 0xFEEDFACF || 
-               magic == 0xCEFAEDFE || magic == 0xCFAFFEED) {
-        out_.log("Detected Mach-O binary (macOS)");
-        result = macho_loader_.load(path);
-    } else
+    } else {
         out_.log("ERROR: unsupported file format (expected PE or ELF)");
         return;
     }
