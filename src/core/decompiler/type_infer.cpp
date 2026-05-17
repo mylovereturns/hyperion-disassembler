@@ -124,7 +124,9 @@ void TypeInfer::infer_from_ops(const PcodeFunc& func) {
     for (auto& blk : func.blocks) {
         for (auto& op : blk.ops) {
             if (!op.output.valid()) continue;
-            int vid = op.output.id;
+            int vid = op.output.is_reg() ? op.output.id :
+                      op.output.is_temp() ? 1000 + op.output.id :
+                      2000 + op.output.id;
             if (op.output.size == 4) set_type(vid, DecompType::make_int(32));
             else if (op.output.size == 2) set_type(vid, DecompType::make_int(16));
             else if (op.output.size == 1) set_type(vid, DecompType::make_int(8));

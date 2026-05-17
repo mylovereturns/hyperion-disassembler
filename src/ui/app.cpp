@@ -164,7 +164,8 @@ int App::run() {
     }
 
     while (!renderer_.should_close()) {
-        renderer_.begin_frame();
+        if (!renderer_.begin_frame())
+            continue;
 
         // pick up analysis completion on main thread (thread-safe handoff)
         if (analysis_done_.exchange(false)) {
@@ -224,6 +225,7 @@ int App::run() {
         render_menubar();
 
         // update debug indicators in disasm
+#ifdef _WIN32
         if (dbgp_.engine().is_attached() && !dbgp_.engine().is_running()) {
             static std::vector<va_t> bp_addrs;
             bp_addrs.clear();
@@ -235,6 +237,9 @@ int App::run() {
             dv_.set_debug_state(0, nullptr);
             dv_.set_debug_engine(&dbgp_.engine());
         }
+#else
+        dv_.set_debug_state(0, nullptr);
+#endif
 
         dv_.render();
         hv_.render();
@@ -422,7 +427,7 @@ void App::open_file(const char* path) {
                magic == 0xCEFAEDFE || magic == 0xCFAFFEED) {
         out_.log("Detected Mach-O binary (macOS)");
         result = macho_loader_.load(path);
-    } else
+    } else {
         out_.log("ERROR: unsupported file format (expected PE or ELF)");
         return;
     }
@@ -768,8 +773,8 @@ void App::handle_keys() {
         va_t xaddr = dv_.cursor();
         if (analyzer_) {
             auto iit = analyzer_->db().insns.find(xaddr);
-            if (iit != analyzer_->db().insns.end() && iit->second.is_call()) {
-                va_t t = iit->second.branch_target();
+            if (iit != analyzer_->db().insns.end() && iit->is_call()) {
+                va_t t = iit->branch_target();
                 if (t) xaddr = t;
             }
         }
@@ -786,8 +791,8 @@ void App::handle_keys() {
     if (ImGui::IsKeyPressed(ImGuiKey_T) && !io.KeyCtrl && analyzer_) show_apply_type_ = true;
 
     if (kb.check("follow") && analyzer_) {
-        auto* insn_ptr = analyzer_->db().insns.count(dv_.cursor()) ?
-            &analyzer_->db().insns.at(dv_.cursor()) : nullptr;
+        auto _fit = analyzer_->db().insns.find(dv_.cursor());
+        auto* insn_ptr = (_fit != analyzer_->db().insns.end()) ? &*_fit : nullptr;
         if (insn_ptr) {
             va_t t = insn_ptr->branch_target();
             if (t && analyzer_->db().insns.count(t)) {
@@ -850,8 +855,10 @@ void App::handle_keys() {
         dbgp_.visible() = true;
     }
     if (ImGui::IsKeyPressed(ImGuiKey_F9) && !io.KeyCtrl) {
+#ifdef _WIN32
         if (dbgp_.engine().is_attached())
             dbgp_.on_run();
+#endif
         dbgp_.visible() = true;
     }
 
@@ -985,12 +992,9 @@ void App::rebase(va_t new_base) {
         exp.addr = static_cast<va_t>(static_cast<i64>(exp.addr) + delta);
 
     auto& db = analyzer_->db();
-    std::unordered_map<va_t, Insn> new_insns;
-    for (auto& [addr, insn] : db.insns) {
+    for (auto& insn : db.insns.raw())
         insn.addr = static_cast<va_t>(static_cast<i64>(insn.addr) + delta);
-        new_insns[insn.addr] = std::move(insn);
-    }
-    db.insns = std::move(new_insns);
+    db.insns.finalize();
 
     std::unordered_map<va_t, Function> new_funcs;
     for (auto& [entry, func] : db.funcs) {
@@ -1001,7 +1005,6 @@ void App::rebase(va_t new_base) {
             bb.end = static_cast<va_t>(static_cast<i64>(bb.end) + delta);
             for (auto& s : bb.succs) s = static_cast<va_t>(static_cast<i64>(s) + delta);
             for (auto& p : bb.preds) p = static_cast<va_t>(static_cast<i64>(p) + delta);
-            for (auto& i : bb.insns) i.addr = static_cast<va_t>(static_cast<i64>(i.addr) + delta);
             new_blocks[bb.start] = std::move(bb);
         }
         func.blocks = std::move(new_blocks);
@@ -1600,7 +1603,8 @@ void App::render_nav_band() {
     };
 
     for (int px = 0; px < w && px < (int)nav_band_data_.size(); ++px) {
-        ImU32 col = type_colors[nav_band_data_[px]];
+        u8 idx = nav_band_data_[px];
+        ImU32 col = type_colors[idx < NB_Entropy + 1 ? idx : 0];
         dl->AddLine(ImVec2(pos.x + px, pos.y), ImVec2(pos.x + px, pos.y + height), col);
     }
 
@@ -1715,7 +1719,10 @@ void App::export_asm() {
             if (ba != entry)
                 out << fmt::format("loc_{:X}:\n", ba);
 
-            for (auto& insn : bb.insns) {
+            auto blk_it = db.insns.range_begin(bb.start);
+            auto blk_end_it = db.insns.range_end(bb.end);
+            for (; blk_it != blk_end_it; ++blk_it) {
+                auto& insn = *blk_it;
                 std::string line = fmt::format("  {:016X}  ", insn.addr);
                 line += insn.mnemonic;
                 if (insn.op_str[0]) {

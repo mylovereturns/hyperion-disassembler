@@ -7,6 +7,9 @@ namespace hype {
 
 namespace {
 
+template<typename T>
+T rd(const u8* p) { T v; std::memcpy(&v, p, sizeof(T)); return v; }
+
 const char* machine_str(u16 machine) {
     switch (machine) {
     case 0x014C: return "i386";
@@ -81,8 +84,8 @@ void PEHeaderView::render_dos_header() {
     if (img_->raw.size() < 64) return;
     const u8* d = img_->raw.data();
 
-    u16 e_magic = *reinterpret_cast<const u16*>(d);
-    u32 e_lfanew = *reinterpret_cast<const u32*>(d + 0x3C);
+    u16 e_magic = rd<u16>(d);
+    u32 e_lfanew = rd<u32>(d + 0x3C);
 
     if (ImGui::BeginTable("##dos", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
         ImGui::TableSetupColumn("Field", ImGuiTableColumnFlags_WidthFixed, 180);
@@ -104,16 +107,16 @@ void PEHeaderView::render_dos_header() {
 void PEHeaderView::render_nt_headers() {
     if (img_->raw.size() < 64) return;
     const u8* d = img_->raw.data();
-    u32 pe_off = *reinterpret_cast<const u32*>(d + 0x3C);
+    u32 pe_off = rd<u32>(d + 0x3C);
     if (pe_off + 24 > img_->raw.size()) return;
 
     const u8* nt = d + pe_off;
-    u32 sig = *reinterpret_cast<const u32*>(nt);
-    u16 machine = *reinterpret_cast<const u16*>(nt + 4);
-    u16 num_sections = *reinterpret_cast<const u16*>(nt + 6);
-    u32 timestamp = *reinterpret_cast<const u32*>(nt + 8);
-    u16 opt_hdr_sz = *reinterpret_cast<const u16*>(nt + 20);
-    u16 characteristics = *reinterpret_cast<const u16*>(nt + 22);
+    u32 sig = rd<u32>(nt);
+    u16 machine = rd<u16>(nt + 4);
+    u16 num_sections = rd<u16>(nt + 6);
+    u32 timestamp = rd<u32>(nt + 8);
+    u16 opt_hdr_sz = rd<u16>(nt + 20);
+    u16 characteristics = rd<u16>(nt + 22);
 
     if (ImGui::BeginTable("##nth", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
         ImGui::TableSetupColumn("Field", ImGuiTableColumnFlags_WidthFixed, 200);
@@ -139,13 +142,13 @@ void PEHeaderView::render_nt_headers() {
 void PEHeaderView::render_optional_header() {
     if (img_->raw.size() < 64) return;
     const u8* d = img_->raw.data();
-    u32 pe_off = *reinterpret_cast<const u32*>(d + 0x3C);
+    u32 pe_off = rd<u32>(d + 0x3C);
     if (pe_off + 24 > img_->raw.size()) return;
 
     const u8* opt = d + pe_off + 24;
     size_t opt_avail = img_->raw.size() - (pe_off + 24);
     if (opt_avail < 72) return;
-    u16 magic = *reinterpret_cast<const u16*>(opt);
+    u16 magic = rd<u16>(opt);
     bool pe32plus = (magic == 0x020B);
     size_t min_opt = pe32plus ? 112 : 96;
     if (opt_avail < min_opt) return;
@@ -162,19 +165,19 @@ void PEHeaderView::render_optional_header() {
         };
 
         row("Magic", fmt::format("0x{:04X} ({})", magic, pe32plus ? "PE32+" : "PE32"));
-        row("AddressOfEntryPoint", fmt::format("0x{:X}", *reinterpret_cast<const u32*>(opt + 16)));
+        row("AddressOfEntryPoint", fmt::format("0x{:X}", rd<u32>(opt + 16)));
         if (pe32plus) {
-            row("ImageBase", fmt::format("0x{:X}", *reinterpret_cast<const u64*>(opt + 24)));
+            row("ImageBase", fmt::format("0x{:X}", rd<u64>(opt + 24)));
         } else {
-            row("ImageBase", fmt::format("0x{:X}", *reinterpret_cast<const u32*>(opt + 28)));
+            row("ImageBase", fmt::format("0x{:X}", rd<u32>(opt + 28)));
         }
-        row("SectionAlignment", fmt::format("0x{:X}", *reinterpret_cast<const u32*>(opt + 32)));
-        row("FileAlignment", fmt::format("0x{:X}", *reinterpret_cast<const u32*>(opt + 36)));
-        row("SizeOfImage", fmt::format("0x{:X}", *reinterpret_cast<const u32*>(opt + 56)));
-        row("SizeOfHeaders", fmt::format("0x{:X}", *reinterpret_cast<const u32*>(opt + 60)));
-        row("Subsystem", fmt::format("{}", *reinterpret_cast<const u16*>(opt + 68)));
+        row("SectionAlignment", fmt::format("0x{:X}", rd<u32>(opt + 32)));
+        row("FileAlignment", fmt::format("0x{:X}", rd<u32>(opt + 36)));
+        row("SizeOfImage", fmt::format("0x{:X}", rd<u32>(opt + 56)));
+        row("SizeOfHeaders", fmt::format("0x{:X}", rd<u32>(opt + 60)));
+        row("Subsystem", fmt::format("{}", rd<u16>(opt + 68)));
         row("NumberOfRvaAndSizes", fmt::format("{}",
-            *reinterpret_cast<const u32*>(opt + (pe32plus ? 108 : 92))));
+            rd<u32>(opt + (pe32plus ? 108 : 92))));
         ImGui::EndTable();
     }
 }
@@ -182,17 +185,17 @@ void PEHeaderView::render_optional_header() {
 void PEHeaderView::render_data_directories() {
     if (img_->raw.size() < 64) return;
     const u8* d = img_->raw.data();
-    u32 pe_off = *reinterpret_cast<const u32*>(d + 0x3C);
+    u32 pe_off = rd<u32>(d + 0x3C);
     if (pe_off + 24 > img_->raw.size()) return;
     const u8* opt = d + pe_off + 24;
     size_t opt_avail = img_->raw.size() - (pe_off + 24);
     if (opt_avail < 96) return;
-    u16 magic = *reinterpret_cast<const u16*>(opt);
+    u16 magic = rd<u16>(opt);
     bool pe32plus = (magic == 0x020B);
     u32 dd_offset = pe32plus ? 112 : 96;
     size_t min_needed = pe32plus ? 112 : 96;
     if (opt_avail < min_needed) return;
-    u32 num_dd = *reinterpret_cast<const u32*>(opt + (pe32plus ? 108 : 92));
+    u32 num_dd = rd<u32>(opt + (pe32plus ? 108 : 92));
     if (num_dd > 16) num_dd = 16;
 
     const u8* dd_base = opt + dd_offset;
@@ -205,8 +208,8 @@ void PEHeaderView::render_data_directories() {
         ImGui::TableHeadersRow();
 
         for (u32 i = 0; i < num_dd; ++i) {
-            u32 rva = *reinterpret_cast<const u32*>(dd_base + i * 8);
-            u32 size = *reinterpret_cast<const u32*>(dd_base + i * 8 + 4);
+            u32 rva = rd<u32>(dd_base + i * 8);
+            u32 size = rd<u32>(dd_base + i * 8 + 4);
             ImGui::TableNextRow();
             ImGui::TableNextColumn(); ImGui::TextUnformatted(data_dir_names[i]);
             ImGui::TableNextColumn(); ImGui::Text("0x%08X", rva);

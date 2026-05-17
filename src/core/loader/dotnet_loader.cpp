@@ -103,16 +103,24 @@ bool DotNetLoader::parse_streams(const u8* root, size_t sz) {
 
 std::string DotNetLoader::read_meta_string(u32 offset) {
     if (!streams_.strings || offset >= streams_.strings_sz) return "";
-    return std::string(reinterpret_cast<const char*>(streams_.strings + offset));
+    const char* s = reinterpret_cast<const char*>(streams_.strings + offset);
+    size_t max_len = streams_.strings_sz - offset;
+    size_t len = strnlen(s, max_len);
+    return std::string(s, len);
 }
 
 std::string DotNetLoader::read_us_string(u32 offset) {
     if (!streams_.us || offset >= streams_.us_sz) return "";
+    size_t remaining = streams_.us_sz - offset;
     const u8* p = streams_.us + offset;
-    u32 len = *p++;
-    if (len & 0x80) { len = ((len & 0x7F) << 8) | *p++; }
+    if (remaining < 1) return "";
+    u32 len = *p++; --remaining;
+    if (len & 0x80) {
+        if (remaining < 1) return "";
+        len = ((len & 0x7F) << 8) | *p++; --remaining;
+    }
     std::string s;
-    for (u32 i = 0; i + 1 < len; i += 2) {
+    for (u32 i = 0; i + 1 < len && i + 1 < remaining; i += 2) {
         char16_t ch = p[i] | (p[i+1] << 8);
         if (ch < 128) s += static_cast<char>(ch);
         else s += '?';
@@ -136,6 +144,7 @@ bool DotNetLoader::parse_tables() {
     int table_count = 0;
     for (int i = 0; i < 64; i++) {
         if (valid_mask & (1ULL << i)) {
+            if (24 + (table_count + 1) * 4 > streams_.tables_sz) return false;
             u32 rows;
             std::memcpy(&rows, row_counts + table_count * 4, 4);
             tables_[i].rows = rows;

@@ -61,17 +61,7 @@ void ScriptConsole::render() {
         }
     }
 
-    // Ctrl+Enter also executes
-    if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Enter) && engine_ && input_[0]) {
-        std::string code(input_);
-        output_.push_back("> " + code);
-        history_.push_front(code);
-        hist_idx_ = -1;
-        std::string result = engine_->execute(code);
-        if (!result.empty()) output_.push_back(result);
-        scroll_bottom_ = true;
-        input_[0] = 0;
-    }
+    // Ctrl+Enter handled by InputText EnterReturnsTrue above
 
     ImGui::End();
 }

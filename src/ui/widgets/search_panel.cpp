@@ -121,13 +121,14 @@ done:;
 
 void SearchPanel::search_immediate() {
     results_.clear();
-    u64 val = strtoull(imm_buf_, nullptr, 16);
-    if (!val) return;
+    char* end = nullptr;
+    u64 val = strtoull(imm_buf_, &end, 16);
+    if (end == imm_buf_ || !imm_buf_[0]) return;
 
-    for (auto& [addr, insn] : db_->insns) {
+    for (auto& insn : db_->insns) {
         for (int k = 0; k < insn.op_count; ++k) {
             if (insn.ops[k].type == OpType::Imm && insn.ops[k].val == val) {
-                results_.push_back({addr, fmt::format("{} {}", insn.mnemonic, insn.op_str)});
+                results_.push_back({insn.addr, fmt::format("{} {}", insn.mnemonic, insn.op_str)});
                 break;
             }
         }

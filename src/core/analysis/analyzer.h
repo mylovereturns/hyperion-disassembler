@@ -72,7 +72,7 @@ private:
     SignatureMatcher   sigmatch_;
     RTTIParser         rtti_;
     std::atomic<float> progress_{0.f};
-    std::unordered_map<va_t, Insn> tentative_;
+    InsnStore          tentative_;
 };
 
 }

@@ -28,7 +28,7 @@ std::vector<PseudoLine> PseudoGen::generate(const Function& func, const Analysis
 
 void PseudoGen::emit_block(const BasicBlock& bb, const AnalysisDB& db,
                            std::vector<PseudoLine>& out, int indent) {
-    for (auto& insn : bb.insns) {
+    db.for_each_insn_in_block(bb, [&](const Insn& insn) {
         std::string line;
         switch (insn.type) {
         case InsnType::Mov:
@@ -101,7 +101,7 @@ void PseudoGen::emit_block(const BasicBlock& bb, const AnalysisDB& db,
         }
         if (!line.empty())
             out.push_back({indent, line, insn.addr});
-    }
+    });
 }
 
 std::string PseudoGen::operand_to_c(const Insn& insn, int op_idx, const AnalysisDB& db) {

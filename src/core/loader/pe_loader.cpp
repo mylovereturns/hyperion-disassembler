@@ -101,7 +101,7 @@ struct ExpDir {
 
 template<typename T>
 const T* ptr_at(const u8* base, size_t off, size_t total) {
-    if (off + sizeof(T) > total) return nullptr;
+    if (off > total || total - off < sizeof(T)) return nullptr;
     return reinterpret_cast<const T*>(base + off);
 }
 

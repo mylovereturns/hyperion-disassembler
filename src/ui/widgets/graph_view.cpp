@@ -52,8 +52,12 @@ void GraphView::layout() {
         for (size_t i = 0; i < addrs.size(); ++i) {
             auto bit = func.blocks.find(addrs[i]);
             float h = 50;
-            if (bit != func.blocks.end())
-                h = std::max(50.f, static_cast<float>(bit->second.insns.size()) * 15.f + 30.f);
+            if (bit != func.blocks.end()) {
+                auto ri = db_->insns.range_begin(bit->second.start);
+                auto re = db_->insns.range_end(bit->second.end);
+                auto cnt = static_cast<size_t>(std::distance(ri, re));
+                h = std::max(50.f, static_cast<float>(cnt) * 15.f + 30.f);
+            }
             h = std::min(h, 300.f);
             mh = std::max(mh, h);
             nodes_.push_back({addrs[i], xs + i * (nw + gap), y, nw, h, l});
@@ -191,7 +195,10 @@ void GraphView::render() {
         if (bit != func.blocks.end()) {
             int max_lines = static_cast<int>((br.y - ty) / (font_sz + 1));
             int shown = 0;
-            for (auto& insn : bit->second.insns) {
+            auto ri = db_->insns.range_begin(bit->second.start);
+            auto re = db_->insns.range_end(bit->second.end);
+            for (; ri != re; ++ri) {
+                auto& insn = *ri;
                 if (shown >= max_lines - 1) {
                     dl->AddText(nullptr, font_sz, ImVec2(tx, ty), col::comment(), "...");
                     break;

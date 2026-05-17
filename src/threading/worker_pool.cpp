@@ -26,7 +26,10 @@ WorkerPool::WorkerPool(unsigned n) {
 }
 
 WorkerPool::~WorkerPool() {
-    stop_ = true;
+    {
+        std::lock_guard lk(mtx_);
+        stop_ = true;
+    }
     cv_.notify_all();
     for (auto& w : workers_)
         if (w.joinable()) w.join();

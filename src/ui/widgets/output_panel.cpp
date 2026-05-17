@@ -15,13 +15,20 @@ void OutputPanel::render() {
     ImGui::Separator();
 
     ImGui::BeginChild("##log");
-    std::lock_guard lk(mtx_);
+    std::deque<std::string> snapshot;
+    bool do_scroll;
+    {
+        std::lock_guard lk(mtx_);
+        snapshot = lines_;
+        do_scroll = scroll_;
+        scroll_ = false;
+    }
     ImGuiListClipper clip;
-    clip.Begin(static_cast<int>(lines_.size()));
+    clip.Begin(static_cast<int>(snapshot.size()));
     while (clip.Step())
         for (int i = clip.DisplayStart; i < clip.DisplayEnd; ++i)
-            ImGui::TextUnformatted(lines_[i].c_str());
-    if (scroll_) { ImGui::SetScrollHereY(1.f); scroll_ = false; }
+            ImGui::TextUnformatted(snapshot[i].c_str());
+    if (do_scroll) ImGui::SetScrollHereY(1.f);
     ImGui::EndChild();
     ImGui::End();
 }

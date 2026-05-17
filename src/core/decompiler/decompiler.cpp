@@ -16,10 +16,10 @@ std::vector<PseudoLine> Decompiler::decompile(const Function& func, const Analys
 
         std::unordered_set<std::string> calls_seen;
         for (auto& [ba, bb] : func.blocks) {
-            for (auto& insn : bb.insns) {
-                if (!insn.is_call()) continue;
+            db.for_each_insn_in_block(bb, [&](const Insn& insn) {
+                if (!insn.is_call()) return;
                 va_t t = insn.branch_target();
-                if (!t) continue;
+                if (!t) return;
                 auto nit = db.names.find(t);
                 std::string name;
                 if (nit != db.names.end())
@@ -30,7 +30,7 @@ std::vector<PseudoLine> Decompiler::decompile(const Function& func, const Analys
                     name = fmt::format("sub_{:X}", t);
                 if (calls_seen.insert(name).second)
                     out.push_back({1, fmt::format("{}();", name), insn.addr});
-            }
+            });
         }
         out.push_back({1, "// ...", 0});
         out.push_back({0, "}", 0});
@@ -40,7 +40,9 @@ std::vector<PseudoLine> Decompiler::decompile(const Function& func, const Analys
     PcodeFunc pf;
     bool is_arm64 = false;
     for (auto& [ba, bb] : func.blocks) {
-        if (!bb.insns.empty() && bb.insns[0].len == 4) {
+        auto blk_it = db.insns.range_begin(bb.start);
+        auto blk_end_it = db.insns.range_end(bb.end);
+        if (blk_it != blk_end_it && blk_it->len == 4) {
             is_arm64 = true;
             break;
         }

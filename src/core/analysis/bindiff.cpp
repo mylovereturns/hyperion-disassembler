@@ -15,7 +15,7 @@ std::vector<DiffResult> BinDiff::compare(const AnalysisDB& a, const AnalysisDB& 
         for (auto& [eb, fb] : b.funcs) {
             if (matched_b.count(eb)) continue;
             if (!fa.name.empty() && fa.name == fb.name) {
-                float sim = compute_similarity(fa, fb);
+                float sim = compute_similarity(fa, fb, a, b);
                 auto st = sim >= 0.999f ? DiffResult::Identical : DiffResult::Modified;
                 results.push_back({ea, eb, fa.name, sim, st});
                 matched_b.insert(eb);
@@ -29,7 +29,7 @@ std::vector<DiffResult> BinDiff::compare(const AnalysisDB& a, const AnalysisDB& 
         va_t best_eb = 0;
         for (auto& [eb, fb] : b.funcs) {
             if (matched_b.count(eb)) continue;
-            float sim = compute_similarity(fa, fb);
+            float sim = compute_similarity(fa, fb, a, b);
             if (sim > best_sim) { best_sim = sim; best_eb = eb; }
         }
         if (best_sim >= 0.5f && best_eb) {
@@ -55,9 +55,10 @@ std::vector<DiffResult> BinDiff::compare(const AnalysisDB& a, const AnalysisDB& 
     return results;
 }
 
-float BinDiff::compute_similarity(const Function& fa, const Function& fb) {
-    auto ba = func_bytes(fa);
-    auto bb = func_bytes(fb);
+float BinDiff::compute_similarity(const Function& fa, const Function& fb,
+                                  const AnalysisDB& da, const AnalysisDB& db) {
+    auto ba = func_bytes(fa, da);
+    auto bb = func_bytes(fb, db);
     if (ba.empty() && bb.empty()) return 1.f;
     if (ba.empty() || bb.empty()) return 0.f;
 
@@ -70,11 +71,13 @@ float BinDiff::compute_similarity(const Function& fa, const Function& fb) {
     return static_cast<float>(match) / static_cast<float>(total);
 }
 
-std::vector<u8> BinDiff::func_bytes(const Function& f) {
+std::vector<u8> BinDiff::func_bytes(const Function& f, const AnalysisDB& db) {
     std::vector<u8> out;
-    for (auto& [_, bb] : f.blocks)
-        for (auto& insn : bb.insns)
+    for (auto& [_, bb] : f.blocks) {
+        db.for_each_insn_in_block(bb, [&](const Insn& insn) {
             out.insert(out.end(), insn.bytes, insn.bytes + insn.len);
+        });
+    }
     return out;
 }
 

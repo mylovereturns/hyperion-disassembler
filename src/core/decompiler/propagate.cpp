@@ -78,8 +78,8 @@ void Propagate::constant_fold(PcodeFunc& func) {
             case PcodeOp::AND: result = l & r; break;
             case PcodeOp::OR:  result = l | r; break;
             case PcodeOp::XOR: result = l ^ r; break;
-            case PcodeOp::SHIFT_LEFT: result = l << r; break;
-            case PcodeOp::SHIFT_RIGHT: result = l >> r; break;
+            case PcodeOp::SHIFT_LEFT: result = (r < 64) ? (l << r) : 0; break;
+            case PcodeOp::SHIFT_RIGHT: result = (r < 64) ? (l >> r) : 0; break;
             case PcodeOp::INT_MULT: result = l * r; break;
             case PcodeOp::INT_EQUAL: result = (l == r) ? 1 : 0; break;
             case PcodeOp::INT_LESS: result = (l < r) ? 1 : 0; break;
@@ -156,10 +156,8 @@ void Propagate::inline_single_use(PcodeFunc& func) {
                     auto& use_op = func.blocks[ubi].ops[uoi];
                     if (op.op == PcodeOp::COPY && op.inputs.size() == 1) {
                         use_op.inputs[uin] = op.inputs[0];
-                    } else if (op.inputs.size() == 2) {
-                        use_op.inputs[uin] = op.inputs[0];
-                    } else if (op.inputs.size() == 1) {
-                        use_op.inputs[uin] = op.inputs[0];
+                    } else {
+                        continue;
                     }
                     op.op = PcodeOp::NOP;
                     changed = true;
@@ -192,9 +190,9 @@ void Propagate::eliminate_identity(PcodeFunc& func) {
             if (op.op != PcodeOp::COPY) continue;
             if (op.inputs.empty()) continue;
             auto& src = op.inputs[0];
-            if (op.output.kind == src.kind && op.output.id == src.id)
+            if (op.output.kind == src.kind && op.output.id == src.id && op.output.offset == src.offset)
                 op.op = PcodeOp::NOP;
-            else if (op.output.is_reg() && src.is_reg() && op.output.id == src.id)
+            else if (op.output.is_reg() && src.is_reg() && op.output.id == src.id && op.output.offset == src.offset)
                 op.op = PcodeOp::NOP;
         }
         std::erase_if(blk.ops, [](const PcodeInsn& op) { return op.op == PcodeOp::NOP; });

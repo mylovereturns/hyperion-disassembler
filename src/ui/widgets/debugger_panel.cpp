@@ -1,4 +1,7 @@
 #include "debugger_panel.h"
+
+#ifdef _WIN32
+
 #include "ui/theme.h"
 #include <fmt/format.h>
 #include <algorithm>
@@ -367,3 +370,5 @@ bool DebuggerPanel::has_breakpoint(va_t addr) const {
 }
 
 }
+
+#endif

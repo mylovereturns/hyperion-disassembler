@@ -61,8 +61,8 @@ Varnode Lifter::operand_read(const Insn& insn, int idx, const AnalysisDB& /*db*/
     case OpType::Imm:
         return vn_const(op.val, op.size / 8 ? op.size / 8 : 8);
     case OpType::Mem: {
-        if (op.val != 0 && op.mem.base != ZYDIS_REGISTER_NONE &&
-            (op.mem.base == ZYDIS_REGISTER_RIP || op.mem.base == ZYDIS_REGISTER_EIP)) {
+        if (op.val != 0 && op.mem_base != ZYDIS_REGISTER_NONE &&
+            (op.mem_base == ZYDIS_REGISTER_RIP || op.mem_base == ZYDIS_REGISTER_EIP)) {
             Varnode addr = vn_const(op.val);
             int sz = op.size / 8;
             if (sz < 1) sz = 8;
@@ -74,16 +74,16 @@ Varnode Lifter::operand_read(const Insn& insn, int idx, const AnalysisDB& /*db*/
         Varnode addr = vn_const(0);
         bool has = false;
 
-        if (op.mem.base && op.mem.base != ZYDIS_REGISTER_NONE) {
-            addr = reg_vn(op.mem.base, 64);
+        if (op.mem_base && op.mem_base != ZYDIS_REGISTER_NONE) {
+            addr = reg_vn(op.mem_base, 64);
             has = true;
         }
 
-        if (op.mem.index && op.mem.index != ZYDIS_REGISTER_NONE) {
-            Varnode idx_r = reg_vn(op.mem.index, 64);
-            if (op.mem.scale > 1) {
+        if (op.mem_index && op.mem_index != ZYDIS_REGISTER_NONE) {
+            Varnode idx_r = reg_vn(op.mem_index, 64);
+            if (op.scale > 1) {
                 Varnode t = alloc_temp();
-                emit(out, PcodeOp::INT_MULT, t, {idx_r, vn_const(op.mem.scale)});
+                emit(out, PcodeOp::INT_MULT, t, {idx_r, vn_const(op.scale)});
                 idx_r = t;
             }
             if (has) {
@@ -96,8 +96,8 @@ Varnode Lifter::operand_read(const Insn& insn, int idx, const AnalysisDB& /*db*/
             has = true;
         }
 
-        if (op.mem.disp != 0) {
-            Varnode d = vn_const(static_cast<u64>(op.mem.disp));
+        if (op.mem_disp != 0) {
+            Varnode d = vn_const(static_cast<u64>(op.mem_disp));
             if (has) {
                 Varnode t = alloc_temp();
                 emit(out, PcodeOp::ADD, t, {addr, d});
@@ -130,15 +130,15 @@ void Lifter::operand_write(const Insn& insn, int idx, Varnode val, PcodeBlock& o
     } else if (op.type == OpType::Mem) {
         Varnode addr = vn_const(0);
         bool has = false;
-        if (op.mem.base && op.mem.base != ZYDIS_REGISTER_NONE) {
-            addr = reg_vn(op.mem.base, 64);
+        if (op.mem_base && op.mem_base != ZYDIS_REGISTER_NONE) {
+            addr = reg_vn(op.mem_base, 64);
             has = true;
         }
-        if (op.mem.index && op.mem.index != ZYDIS_REGISTER_NONE) {
-            Varnode idx_r = reg_vn(op.mem.index, 64);
-            if (op.mem.scale > 1) {
+        if (op.mem_index && op.mem_index != ZYDIS_REGISTER_NONE) {
+            Varnode idx_r = reg_vn(op.mem_index, 64);
+            if (op.scale > 1) {
                 Varnode t = alloc_temp();
-                emit(out, PcodeOp::INT_MULT, t, {idx_r, vn_const(op.mem.scale)});
+                emit(out, PcodeOp::INT_MULT, t, {idx_r, vn_const(op.scale)});
                 idx_r = t;
             }
             if (has) {
@@ -148,8 +148,8 @@ void Lifter::operand_write(const Insn& insn, int idx, Varnode val, PcodeBlock& o
             } else { addr = idx_r; }
             has = true;
         }
-        if (op.mem.disp != 0) {
-            Varnode d = vn_const(static_cast<u64>(op.mem.disp));
+        if (op.mem_disp != 0) {
+            Varnode d = vn_const(static_cast<u64>(op.mem_disp));
             if (has) {
                 Varnode t = alloc_temp();
                 emit(out, PcodeOp::ADD, t, {addr, d});
@@ -194,10 +194,10 @@ static PcodeOp jcc_to_flag_op(u16 mnemonic_id, int& flag_reg, bool& negate) {
     case ZYDIS_MNEMONIC_JNB:  flag_reg = REG_CF; negate = true;  return PcodeOp::NOP;
     case ZYDIS_MNEMONIC_JL:   flag_reg = REG_SF; negate = false; return PcodeOp::NOP;
     case ZYDIS_MNEMONIC_JNL:  flag_reg = REG_SF; negate = true;  return PcodeOp::NOP;
-    case ZYDIS_MNEMONIC_JLE:  flag_reg = REG_ZF; negate = false; return PcodeOp::NOP; // zf || sf
-    case ZYDIS_MNEMONIC_JNLE: flag_reg = REG_ZF; negate = true;  return PcodeOp::NOP;
-    case ZYDIS_MNEMONIC_JBE:  flag_reg = REG_ZF; negate = false; return PcodeOp::NOP; // cf || zf
-    case ZYDIS_MNEMONIC_JNBE: flag_reg = REG_ZF; negate = true;  return PcodeOp::NOP;
+    case ZYDIS_MNEMONIC_JLE:  flag_reg = REG_ZF; negate = false; return PcodeOp::BOOL_OR;
+    case ZYDIS_MNEMONIC_JNLE: flag_reg = REG_ZF; negate = true;  return PcodeOp::BOOL_OR;
+    case ZYDIS_MNEMONIC_JBE:  flag_reg = REG_CF; negate = false; return PcodeOp::BOOL_OR;
+    case ZYDIS_MNEMONIC_JNBE: flag_reg = REG_CF; negate = true;  return PcodeOp::BOOL_OR;
     default: flag_reg = REG_ZF; negate = true; return PcodeOp::NOP;
     }
 }
@@ -218,22 +218,22 @@ void Lifter::lift_insn(const Insn& insn, const AnalysisDB& db, PcodeBlock& out) 
         auto& dst_op = insn.ops[0];
         auto& src_op = insn.ops[1];
         if (dst_op.type == OpType::Reg && src_op.type == OpType::Mem) {
-            if (src_op.val != 0 && src_op.mem.base != ZYDIS_REGISTER_NONE &&
-                (src_op.mem.base == ZYDIS_REGISTER_RIP || src_op.mem.base == ZYDIS_REGISTER_EIP)) {
+            if (src_op.val != 0 && src_op.mem_base != ZYDIS_REGISTER_NONE &&
+                (src_op.mem_base == ZYDIS_REGISTER_RIP || src_op.mem_base == ZYDIS_REGISTER_EIP)) {
                 emit(out, PcodeOp::COPY, reg_vn(dst_op.reg, dst_op.size), {vn_const(src_op.val)});
                 break;
             }
             Varnode addr = vn_const(0);
             bool has = false;
-            if (src_op.mem.base && src_op.mem.base != ZYDIS_REGISTER_NONE) {
-                addr = reg_vn(src_op.mem.base, 64);
+            if (src_op.mem_base && src_op.mem_base != ZYDIS_REGISTER_NONE) {
+                addr = reg_vn(src_op.mem_base, 64);
                 has = true;
             }
-            if (src_op.mem.index && src_op.mem.index != ZYDIS_REGISTER_NONE) {
-                Varnode idx_r = reg_vn(src_op.mem.index, 64);
-                if (src_op.mem.scale > 1) {
+            if (src_op.mem_index && src_op.mem_index != ZYDIS_REGISTER_NONE) {
+                Varnode idx_r = reg_vn(src_op.mem_index, 64);
+                if (src_op.scale > 1) {
                     Varnode t = alloc_temp();
-                    emit(out, PcodeOp::INT_MULT, t, {idx_r, vn_const(src_op.mem.scale)});
+                    emit(out, PcodeOp::INT_MULT, t, {idx_r, vn_const(src_op.scale)});
                     idx_r = t;
                 }
                 if (has) {
@@ -243,8 +243,8 @@ void Lifter::lift_insn(const Insn& insn, const AnalysisDB& db, PcodeBlock& out) 
                 } else { addr = idx_r; }
                 has = true;
             }
-            if (src_op.mem.disp != 0) {
-                Varnode d = vn_const(static_cast<u64>(src_op.mem.disp));
+            if (src_op.mem_disp != 0) {
+                Varnode d = vn_const(static_cast<u64>(src_op.mem_disp));
                 if (has) {
                     Varnode t = alloc_temp();
                     emit(out, PcodeOp::ADD, t, {addr, d});
@@ -286,11 +286,25 @@ void Lifter::lift_insn(const Insn& insn, const AnalysisDB& db, PcodeBlock& out) 
         break;
     }
     case InsnType::Mul: {
-        auto rax_v = vn_reg(REG_RAX, "rax", 8);
-        Varnode src = operand_read(insn, insn.op_count > 1 ? 1 : 0, db, out);
-        Varnode result = alloc_temp();
-        emit(out, PcodeOp::INT_MULT, result, {rax_v, src});
-        emit(out, PcodeOp::COPY, rax_v, {result});
+        if (insn.op_count <= 1) {
+            auto rax_v = vn_reg(REG_RAX, "rax", 8);
+            Varnode src = operand_read(insn, 0, db, out);
+            Varnode result = alloc_temp();
+            emit(out, PcodeOp::INT_MULT, result, {rax_v, src});
+            emit(out, PcodeOp::COPY, rax_v, {result});
+        } else if (insn.op_count == 2) {
+            Varnode dst = operand_read(insn, 0, db, out);
+            Varnode src = operand_read(insn, 1, db, out);
+            Varnode result = alloc_temp(dst.size);
+            emit(out, PcodeOp::INT_MULT, result, {dst, src});
+            operand_write(insn, 0, result, out);
+        } else {
+            Varnode src = operand_read(insn, 1, db, out);
+            Varnode imm = operand_read(insn, 2, db, out);
+            Varnode result = alloc_temp(src.size);
+            emit(out, PcodeOp::INT_MULT, result, {src, imm});
+            operand_write(insn, 0, result, out);
+        }
         break;
     }
     case InsnType::Div: {
@@ -339,14 +353,21 @@ void Lifter::lift_insn(const Insn& insn, const AnalysisDB& db, PcodeBlock& out) 
     }
     case InsnType::Jcc: {
         int flag_reg; bool negate;
-        jcc_to_flag_op(insn.mnemonic_id, flag_reg, negate);
+        PcodeOp compound = jcc_to_flag_op(insn.mnemonic_id, flag_reg, negate);
         Varnode flag = vn_reg(flag_reg, flag_reg == REG_ZF ? "ZF" :
                               flag_reg == REG_CF ? "CF" :
                               flag_reg == REG_SF ? "SF" : "OF", 1);
         Varnode cond_val = flag;
-        if (negate) {
+        if (compound == PcodeOp::BOOL_OR) {
+            int sec_flag = (flag_reg == REG_ZF) ? REG_SF : REG_ZF;
+            Varnode sec = vn_reg(sec_flag, sec_flag == REG_ZF ? "ZF" : "SF", 1);
             cond_val = alloc_temp(1);
-            emit(out, PcodeOp::BOOL_NOT, cond_val, {flag});
+            emit(out, PcodeOp::BOOL_OR, cond_val, {flag, sec});
+        }
+        if (negate) {
+            Varnode neg = alloc_temp(1);
+            emit(out, PcodeOp::BOOL_NOT, neg, {cond_val});
+            cond_val = neg;
         }
         va_t target = insn.branch_target();
         emit(out, PcodeOp::CBRANCH, {}, {vn_const(target), cond_val});
@@ -392,8 +413,9 @@ void Lifter::lift_insn(const Insn& insn, const AnalysisDB& db, PcodeBlock& out) 
 
 void Lifter::lift_block(const BasicBlock& bb, const AnalysisDB& db, PcodeBlock& out) {
     out.addr = bb.start;
-    for (auto& insn : bb.insns)
+    db.for_each_insn_in_block(bb, [&](const Insn& insn) {
         lift_insn(insn, db, out);
+    });
 }
 
 PcodeFunc Lifter::lift(const Function& func, const AnalysisDB& db) {

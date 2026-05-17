@@ -5,7 +5,7 @@
 namespace hype {
 
 bool DCE::is_callee_saved(int id) const {
-    return id == 3 || id == 5 || id == 6 || id == 7 ||
+    return id == 3 || id == 5 ||
            id == 12 || id == 13 || id == 14 || id == 15;
 }
 
@@ -70,9 +70,6 @@ void DCE::run(PcodeFunc& func) {
                     if (addr.is_reg() && (addr.id == RSP_ID || addr.id == RBP_ID))
                         stack_store = true;
                     if (addr.kind == VarnodeKind::Stack)
-                        stack_store = true;
-                    // temp that was derived from rsp
-                    if (addr.is_temp())
                         stack_store = true;
                 }
                 if (stack_store) { op.op = PcodeOp::NOP; continue; }

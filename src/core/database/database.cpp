@@ -133,11 +133,14 @@ bool Database::load(const fs::path& dir, PEImage& img, AnalysisDB& db) {
         std::ifstream f(dir / "names.bin", std::ios::binary);
         if (f) {
             u32 n; f.read(reinterpret_cast<char*>(&n), 4);
+            if (!f) return false;
             for (u32 i = 0; i < n; ++i) {
                 va_t addr; f.read(reinterpret_cast<char*>(&addr), 8);
                 u16 nlen; f.read(reinterpret_cast<char*>(&nlen), 2);
+                if (!f) break;
                 std::string name(nlen, '\0');
                 f.read(name.data(), nlen);
+                if (!f) break;
                 db.names[addr] = std::move(name);
             }
         }
@@ -147,11 +150,14 @@ bool Database::load(const fs::path& dir, PEImage& img, AnalysisDB& db) {
         std::ifstream f(dir / "comments.bin", std::ios::binary);
         if (f) {
             u32 n; f.read(reinterpret_cast<char*>(&n), 4);
+            if (!f) return false;
             for (u32 i = 0; i < n; ++i) {
                 va_t addr; f.read(reinterpret_cast<char*>(&addr), 8);
                 u16 clen; f.read(reinterpret_cast<char*>(&clen), 2);
+                if (!f) break;
                 std::string cmt(clen, '\0');
                 f.read(cmt.data(), clen);
+                if (!f) break;
                 db.comments[addr] = std::move(cmt);
             }
         }

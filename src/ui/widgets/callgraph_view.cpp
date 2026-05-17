@@ -48,19 +48,19 @@ void CallGraphView::show_function(va_t entry) {
     if (db_->funcs.count(entry)) {
         auto& func = db_->funcs.at(entry);
         for (auto& [ba, bb] : func.blocks) {
-            for (auto& insn : bb.insns) {
-                if (!insn.is_call()) continue;
+            db_->for_each_insn_in_block(bb, [&](const Insn& insn) {
+                if (!insn.is_call()) return;
                 va_t t = insn.branch_target();
-                if (!t) continue;
+                if (!t) return;
                 bool dup = false;
                 for (auto& e : callees_)
                     if (e.addr == t) { dup = true; break; }
-                if (dup) continue;
+                if (dup) return;
                 std::string n = fmt::format("sub_{:X}", t);
                 auto nit = db_->names.find(t);
                 if (nit != db_->names.end()) n = nit->second;
                 callees_.push_back({t, n});
-            }
+            });
         }
     }
 }

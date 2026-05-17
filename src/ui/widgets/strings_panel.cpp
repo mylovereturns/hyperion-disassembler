@@ -4,11 +4,40 @@
 
 namespace hype {
 
+void StringsPanel::rebuild_cache() {
+    cache_.clear();
+    if (!db_) return;
+
+    std::string filt(filter_);
+    last_filter_ = filt;
+    dirty_ = false;
+
+    cache_.reserve(db_->strings.size());
+    for (int i = 0; i < (int)db_->strings.size(); ++i) {
+        auto& [addr, str] = db_->strings[i];
+        if (!filt.empty() && str.find(filt) == std::string::npos) continue;
+
+        CachedRow row;
+        row.src_index = i;
+        row.addr = addr;
+        row.value = str;
+
+        auto xit = db_->xrefs_to.find(addr);
+        row.xref_count = xit != db_->xrefs_to.end() ? static_cast<int>(xit->second.size()) : 0;
+        row.nav_target = (row.xref_count > 0) ? xit->second[0].from : 0;
+        row.label = fmt::format("{:016X}##s{}", addr, i);
+
+        cache_.push_back(std::move(row));
+    }
+}
+
 void StringsPanel::render() {
     ImGui::Begin("Strings");
     if (!db_) { ImGui::End(); return; }
 
-    ImGui::InputTextWithHint("##sf", "Filter...", filter_, sizeof(filter_));
+    if (ImGui::InputTextWithHint("##sf", "Filter...", filter_, sizeof(filter_)))
+        dirty_ = true;
+
     ImGui::SameLine();
     if (ImGui::SmallButton("Copy")) {
         std::string out;
@@ -17,44 +46,41 @@ void StringsPanel::render() {
         ImGui::SetClipboardText(out.c_str());
     }
     ImGui::Separator();
-    std::string filt(filter_);
+
+    if (dirty_ || std::string(filter_) != last_filter_)
+        rebuild_cache();
 
     if (ImGui::BeginTable("##st", 3, ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg)) {
         ImGui::TableSetupColumn("Address", ImGuiTableColumnFlags_WidthFixed, 140);
         ImGui::TableSetupColumn("Xrefs", ImGuiTableColumnFlags_WidthFixed, 50);
         ImGui::TableSetupColumn("String");
+        ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableHeadersRow();
 
-        for (int i = 0; i < (int)db_->strings.size(); ++i) {
-            auto& [addr, str] = db_->strings[i];
-            if (!filt.empty() && str.find(filt) == std::string::npos) continue;
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
+        ImGuiListClipper clip;
+        clip.Begin(static_cast<int>(cache_.size()));
+        while (clip.Step()) {
+            for (int i = clip.DisplayStart; i < clip.DisplayEnd; ++i) {
+                auto& row = cache_[i];
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
 
-            auto xit = db_->xrefs_to.find(addr);
-            int cnt = xit != db_->xrefs_to.end() ? static_cast<int>(xit->second.size()) : 0;
-
-            // navigate to the instruction that references this string
-            va_t nav_target = 0;
-            if (cnt > 0)
-                nav_target = xit->second[0].from;
-
-            auto lbl = fmt::format("{:016X}##s{}", addr, i);
-            if (ImGui::Selectable(lbl.c_str(), false, ImGuiSelectableFlags_SpanAllColumns)) {
-                if (nav_) {
-                    if (nav_target)
-                        nav_(nav_target);
-                    else
-                        nav_(addr);  // will go to hex view via navigate_to fallback
+                if (ImGui::Selectable(row.label.c_str(), false, ImGuiSelectableFlags_SpanAllColumns)) {
+                    if (nav_) {
+                        if (row.nav_target)
+                            nav_(row.nav_target);
+                        else
+                            nav_(row.addr);
+                    }
                 }
+                ImGui::TableNextColumn();
+                if (row.xref_count > 0)
+                    ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(col::xref()), "%d", row.xref_count);
+                else
+                    ImGui::TextDisabled("-");
+                ImGui::TableNextColumn();
+                ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(col::str()), "\"%s\"", row.value.c_str());
             }
-            ImGui::TableNextColumn();
-            if (cnt > 0)
-                ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(col::xref()), "%d", cnt);
-            else
-                ImGui::TextDisabled("-");
-            ImGui::TableNextColumn();
-            ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(col::str()), "\"%s\"", str.c_str());
         }
         ImGui::EndTable();
     }

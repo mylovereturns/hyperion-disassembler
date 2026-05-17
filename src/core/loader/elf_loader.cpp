@@ -146,6 +146,8 @@ u32 elf_to_pe_flags(u32 pflags) {
 
 const char* strtab_get(const u8* strtab, size_t strtab_sz, u32 offset) {
     if (offset >= strtab_sz) return "";
+    const void* nul = std::memchr(strtab + offset, 0, strtab_sz - offset);
+    if (!nul) return "";
     return reinterpret_cast<const char*>(strtab + offset);
 }
 
@@ -239,7 +241,7 @@ bool ELFLoader::parse_segments(PEImage& img) {
     if (is64_) {
         auto* eh = reinterpret_cast<const Elf64_Ehdr*>(base_);
         for (u16 i = 0; i < eh->e_phnum; ++i) {
-            size_t off = eh->e_phoff + i * eh->e_phentsize;
+            size_t off = static_cast<size_t>(eh->e_phoff) + static_cast<size_t>(i) * static_cast<size_t>(eh->e_phentsize);
             if (off + sizeof(Elf64_Phdr) > size_) break;
             auto* ph = reinterpret_cast<const Elf64_Phdr*>(base_ + off);
             if (ph->p_type != PT_LOAD) continue;
@@ -265,7 +267,7 @@ bool ELFLoader::parse_segments(PEImage& img) {
     } else {
         auto* eh = reinterpret_cast<const Elf32_Ehdr*>(base_);
         for (u16 i = 0; i < eh->e_phnum; ++i) {
-            size_t off = eh->e_phoff + i * eh->e_phentsize;
+            size_t off = static_cast<size_t>(eh->e_phoff) + static_cast<size_t>(i) * static_cast<size_t>(eh->e_phentsize);
             if (off + sizeof(Elf32_Phdr) > size_) break;
             auto* ph = reinterpret_cast<const Elf32_Phdr*>(base_ + off);
             if (ph->p_type != PT_LOAD) continue;
@@ -302,7 +304,7 @@ bool ELFLoader::parse_sections(PEImage& img) {
         auto* eh = reinterpret_cast<const Elf64_Ehdr*>(base_);
         if (eh->e_shnum == 0 || eh->e_shstrndx == 0) return true;
 
-        size_t str_off = eh->e_shoff + eh->e_shstrndx * eh->e_shentsize;
+        size_t str_off = eh->e_shoff + static_cast<size_t>(eh->e_shstrndx) * eh->e_shentsize;
         if (str_off + sizeof(Elf64_Shdr) > size_) return true;
         auto* str_sh = reinterpret_cast<const Elf64_Shdr*>(base_ + str_off);
         if (str_sh->sh_offset + str_sh->sh_size <= size_) {
@@ -311,7 +313,7 @@ bool ELFLoader::parse_sections(PEImage& img) {
         }
 
         for (u16 i = 0; i < eh->e_shnum; ++i) {
-            size_t off = eh->e_shoff + i * eh->e_shentsize;
+            size_t off = eh->e_shoff + static_cast<size_t>(i) * eh->e_shentsize;
             if (off + sizeof(Elf64_Shdr) > size_) break;
             auto* sh = reinterpret_cast<const Elf64_Shdr*>(base_ + off);
             if (sh->sh_addr == 0 || sh->sh_size == 0) continue;
@@ -329,7 +331,7 @@ bool ELFLoader::parse_sections(PEImage& img) {
         auto* eh = reinterpret_cast<const Elf32_Ehdr*>(base_);
         if (eh->e_shnum == 0 || eh->e_shstrndx == 0) return true;
 
-        size_t str_off = eh->e_shoff + eh->e_shstrndx * eh->e_shentsize;
+        size_t str_off = eh->e_shoff + static_cast<size_t>(eh->e_shstrndx) * eh->e_shentsize;
         if (str_off + sizeof(Elf32_Shdr) > size_) return true;
         auto* str_sh = reinterpret_cast<const Elf32_Shdr*>(base_ + str_off);
         if (str_sh->sh_offset + str_sh->sh_size <= size_) {
@@ -338,7 +340,7 @@ bool ELFLoader::parse_sections(PEImage& img) {
         }
 
         for (u16 i = 0; i < eh->e_shnum; ++i) {
-            size_t off = eh->e_shoff + i * eh->e_shentsize;
+            size_t off = eh->e_shoff + static_cast<size_t>(i) * eh->e_shentsize;
             if (off + sizeof(Elf32_Shdr) > size_) break;
             auto* sh = reinterpret_cast<const Elf32_Shdr*>(base_ + off);
             if (sh->sh_addr == 0 || sh->sh_size == 0) continue;
@@ -360,7 +362,7 @@ bool ELFLoader::parse_symbols(PEImage& img) {
     if (is64_) {
         auto* eh = reinterpret_cast<const Elf64_Ehdr*>(base_);
         for (u16 si = 0; si < eh->e_shnum; ++si) {
-            size_t off = eh->e_shoff + si * eh->e_shentsize;
+            size_t off = eh->e_shoff + static_cast<size_t>(si) * eh->e_shentsize;
             if (off + sizeof(Elf64_Shdr) > size_) break;
             auto* sh = reinterpret_cast<const Elf64_Shdr*>(base_ + off);
 
@@ -369,13 +371,14 @@ bool ELFLoader::parse_symbols(PEImage& img) {
             if (sh->sh_entsize < sizeof(Elf64_Sym)) continue;
 
             // get linked strtab
-            size_t strtab_off_hdr = eh->e_shoff + sh->sh_link * eh->e_shentsize;
+            size_t strtab_off_hdr = eh->e_shoff + static_cast<size_t>(sh->sh_link) * eh->e_shentsize;
             if (strtab_off_hdr + sizeof(Elf64_Shdr) > size_) continue;
             auto* str_sh = reinterpret_cast<const Elf64_Shdr*>(base_ + strtab_off_hdr);
             if (str_sh->sh_offset + str_sh->sh_size > size_) continue;
 
             const u8* strtab = base_ + str_sh->sh_offset;
             size_t strtab_sz = static_cast<size_t>(str_sh->sh_size);
+            if (sh->sh_entsize == 0) continue;
             size_t count = static_cast<size_t>(sh->sh_size / sh->sh_entsize);
 
             for (size_t i = 1; i < count; ++i) {
@@ -402,7 +405,7 @@ bool ELFLoader::parse_symbols(PEImage& img) {
     } else {
         auto* eh = reinterpret_cast<const Elf32_Ehdr*>(base_);
         for (u16 si = 0; si < eh->e_shnum; ++si) {
-            size_t off = eh->e_shoff + si * eh->e_shentsize;
+            size_t off = eh->e_shoff + static_cast<size_t>(si) * eh->e_shentsize;
             if (off + sizeof(Elf32_Shdr) > size_) break;
             auto* sh = reinterpret_cast<const Elf32_Shdr*>(base_ + off);
 
@@ -410,13 +413,14 @@ bool ELFLoader::parse_symbols(PEImage& img) {
             if (sh->sh_offset + sh->sh_size > size_) continue;
             if (sh->sh_entsize < sizeof(Elf32_Sym)) continue;
 
-            size_t strtab_off_hdr = eh->e_shoff + sh->sh_link * eh->e_shentsize;
+            size_t strtab_off_hdr = eh->e_shoff + static_cast<size_t>(sh->sh_link) * eh->e_shentsize;
             if (strtab_off_hdr + sizeof(Elf32_Shdr) > size_) continue;
             auto* str_sh = reinterpret_cast<const Elf32_Shdr*>(base_ + strtab_off_hdr);
             if (str_sh->sh_offset + str_sh->sh_size > size_) continue;
 
             const u8* strtab = base_ + str_sh->sh_offset;
             size_t strtab_sz = str_sh->sh_size;
+            if (sh->sh_entsize == 0) continue;
             size_t count = sh->sh_size / sh->sh_entsize;
 
             for (size_t i = 1; i < count; ++i) {
@@ -455,13 +459,13 @@ bool ELFLoader::parse_dynamic(PEImage& img) {
         size_t dynstr_sz = 0;
 
         for (u16 i = 0; i < eh->e_shnum; ++i) {
-            size_t off = eh->e_shoff + i * eh->e_shentsize;
+            size_t off = eh->e_shoff + static_cast<size_t>(i) * eh->e_shentsize;
             if (off + sizeof(Elf64_Shdr) > size_) break;
             auto* sh = reinterpret_cast<const Elf64_Shdr*>(base_ + off);
 
             if (sh->sh_type == SHT_DYNSYM) {
                 dynsym_sh = sh;
-                size_t str_hdr_off = eh->e_shoff + sh->sh_link * eh->e_shentsize;
+                size_t str_hdr_off = eh->e_shoff + static_cast<size_t>(sh->sh_link) * eh->e_shentsize;
                 if (str_hdr_off + sizeof(Elf64_Shdr) <= size_) {
                     auto* sth = reinterpret_cast<const Elf64_Shdr*>(base_ + str_hdr_off);
                     if (sth->sh_offset + sth->sh_size <= size_) {
@@ -474,7 +478,7 @@ bool ELFLoader::parse_dynamic(PEImage& img) {
             // .rela.plt type = SHT_RELA (4)
             if (sh->sh_type == 4) {
                 // check name via shstrtab
-                size_t str_sec_off = eh->e_shoff + eh->e_shstrndx * eh->e_shentsize;
+                size_t str_sec_off = eh->e_shoff + static_cast<size_t>(eh->e_shstrndx) * eh->e_shentsize;
                 if (str_sec_off + sizeof(Elf64_Shdr) <= size_) {
                     auto* ssh = reinterpret_cast<const Elf64_Shdr*>(base_ + str_sec_off);
                     if (ssh->sh_offset + ssh->sh_size <= size_) {
@@ -488,6 +492,7 @@ bool ELFLoader::parse_dynamic(PEImage& img) {
         }
 
         if (dynsym_sh && dynstr && relaplt_sh) {
+            if (relaplt_sh->sh_entsize == 0) return true;
             size_t rela_count = static_cast<size_t>(relaplt_sh->sh_size / relaplt_sh->sh_entsize);
             for (size_t i = 0; i < rela_count; ++i) {
                 size_t roff = static_cast<size_t>(relaplt_sh->sh_offset) + i * static_cast<size_t>(relaplt_sh->sh_entsize);
@@ -519,13 +524,13 @@ bool ELFLoader::parse_dynamic(PEImage& img) {
         size_t dynstr_sz = 0;
 
         for (u16 i = 0; i < eh->e_shnum; ++i) {
-            size_t off = eh->e_shoff + i * eh->e_shentsize;
+            size_t off = eh->e_shoff + static_cast<size_t>(i) * eh->e_shentsize;
             if (off + sizeof(Elf32_Shdr) > size_) break;
             auto* sh = reinterpret_cast<const Elf32_Shdr*>(base_ + off);
 
             if (sh->sh_type == SHT_DYNSYM) {
                 dynsym_sh = sh;
-                size_t str_hdr_off = eh->e_shoff + sh->sh_link * eh->e_shentsize;
+                size_t str_hdr_off = eh->e_shoff + static_cast<size_t>(sh->sh_link) * eh->e_shentsize;
                 if (str_hdr_off + sizeof(Elf32_Shdr) <= size_) {
                     auto* sth = reinterpret_cast<const Elf32_Shdr*>(base_ + str_hdr_off);
                     if (sth->sh_offset + sth->sh_size <= size_) {
@@ -537,7 +542,7 @@ bool ELFLoader::parse_dynamic(PEImage& img) {
 
             // .rel.plt type = SHT_REL (9)
             if (sh->sh_type == 9) {
-                size_t str_sec_off = eh->e_shoff + eh->e_shstrndx * eh->e_shentsize;
+                size_t str_sec_off = eh->e_shoff + static_cast<size_t>(eh->e_shstrndx) * eh->e_shentsize;
                 if (str_sec_off + sizeof(Elf32_Shdr) <= size_) {
                     auto* ssh = reinterpret_cast<const Elf32_Shdr*>(base_ + str_sec_off);
                     if (ssh->sh_offset + ssh->sh_size <= size_) {
@@ -550,6 +555,7 @@ bool ELFLoader::parse_dynamic(PEImage& img) {
         }
 
         if (dynsym_sh && dynstr && relplt_sh) {
+            if (relplt_sh->sh_entsize == 0) return true;
             size_t rel_count = relplt_sh->sh_size / relplt_sh->sh_entsize;
             for (size_t i = 0; i < rel_count; ++i) {
                 size_t roff = relplt_sh->sh_offset + i * relplt_sh->sh_entsize;

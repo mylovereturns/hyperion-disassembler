@@ -1,12 +1,35 @@
 #include "disasm_view.h"
 #include "stack_frame_view.h"
+#ifdef _WIN32
 #include "debugger/debug_engine.h"
+#endif
 #include "ui/theme.h"
 #include "ui/fonts.h"
 #include <fmt/format.h>
 #include <algorithm>
+#include <cstdio>
 
 namespace hype {
+
+static void fmt_addr(char* buf, va_t addr) {
+    static const char hex[] = "0123456789ABCDEF";
+    for (int i = 15; i >= 0; --i) { buf[i] = hex[addr & 0xF]; addr >>= 4; }
+    buf[16] = '\0';
+}
+
+static void fmt_hex_bytes(char* buf, const u8* bytes, int len, int max_bytes = 4) {
+    static const char hex[] = "0123456789ABCDEF";
+    int nb = len < max_bytes ? len : max_bytes;
+    nb = nb < 6 ? nb : 6;
+    char* p = buf;
+    for (int b = 0; b < nb; ++b) {
+        *p++ = hex[bytes[b] >> 4];
+        *p++ = hex[bytes[b] & 0xF];
+        *p++ = ' ';
+    }
+    if (len > 6) { *p++ = '.'; *p++ = '.'; }
+    *p = '\0';
+}
 
 void DisasmView::goto_addr(va_t addr) {
     scroll_to_ = addr;
@@ -22,21 +45,20 @@ void DisasmView::rebuild() {
     addrs_.reserve(db_->insns.size() + db_->data_items.size());
 
     if (beautify_) {
-        // only show instructions inside functions + important data
         for (auto& [entry, func] : db_->funcs) {
             for (auto& [ba, bb] : func.blocks) {
-                for (auto& insn : bb.insns)
+                db_->for_each_insn_in_block(bb, [&](const Insn& insn) {
                     addrs_.push_back(insn.addr);
+                });
             }
         }
-        // include IAT entries, strings, pointers
         for (auto& [a, item] : db_->data_items) {
             if (item.style == DataStyle::Import || item.style == DataStyle::String || item.style == DataStyle::Pointer)
                 addrs_.push_back(a);
         }
     } else {
-        for (auto& [a, _] : db_->insns)
-            addrs_.push_back(a);
+        for (auto& insn : db_->insns)
+            addrs_.push_back(insn.addr);
         for (auto& [a, _] : db_->data_items)
             addrs_.push_back(a);
     }
@@ -48,7 +70,220 @@ void DisasmView::rebuild() {
     for (auto& [addr, str] : db_->strings)
         str_map_[addr] = &str;
 
+    rebuild_data_cache();
+    rebuild_insn_cache();
+
+    seg_hdr_cache_.clear();
+    if (img_) {
+        for (auto& seg : img_->segments)
+            seg_hdr_cache_[seg.va] = fmt::format("; === {} ===", seg.name);
+    }
+
     dirty_ = false;
+}
+
+void DisasmView::rebuild_data_cache() {
+    data_cache_.clear();
+    data_cache_.reserve(db_->data_items.size());
+
+    for (auto& [a, item] : db_->data_items) {
+        CachedDataLine c;
+        auto nit = db_->names.find(item.addr);
+
+        switch (item.style) {
+        case DataStyle::Import: {
+            std::string func_name;
+            if (nit != db_->names.end()) {
+                auto sep = nit->second.find('!');
+                func_name = (sep != std::string::npos) ? nit->second.substr(sep + 1) : nit->second;
+            } else {
+                func_name = fmt::format("unk_{:X}", item.addr);
+            }
+            const char* sz_kw = (item.size == DataSize::Qword) ? "qword" : "dword";
+            c.label = fmt::format("extrn {}:{}", func_name, sz_kw);
+            c.color = IM_COL32(80, 210, 230, 255);
+            break;
+        }
+        case DataStyle::String: {
+            std::string val = "\"";
+            if (img_) {
+                for (auto& seg : img_->segments) {
+                    if (!seg.contains(item.addr)) continue;
+                    size_t off = static_cast<size_t>(item.addr - seg.va);
+                    for (size_t i = off; i < seg.data.size() && seg.data[i]; ++i)
+                        val += static_cast<char>(seg.data[i]);
+                    break;
+                }
+            }
+            val += "\", 0";
+            c.label = fmt::format("db    {}", val);
+            c.color = col::str();
+            break;
+        }
+        case DataStyle::Pointer: {
+            u64 val = 0;
+            if (img_) {
+                for (auto& seg : img_->segments) {
+                    if (!seg.contains(item.addr)) continue;
+                    size_t off = static_cast<size_t>(item.addr - seg.va);
+                    size_t sz = static_cast<size_t>(item.size);
+                    if (off + sz <= seg.data.size())
+                        memcpy(&val, seg.data.data() + off, sz);
+                    break;
+                }
+            }
+            const char* dir = (item.size == DataSize::Qword) ? "dq" : "dd";
+            std::string target_name;
+            auto tit = db_->names.find(static_cast<va_t>(val));
+            if (tit != db_->names.end())
+                target_name = tit->second;
+            else
+                target_name = fmt::format("sub_{:X}", val);
+            c.label = fmt::format("{}    offset {}", dir, target_name);
+            c.color = IM_COL32(100, 160, 255, 255);
+            break;
+        }
+        case DataStyle::Align: {
+            size_t run_bytes = static_cast<size_t>(item.size);
+            if (img_) {
+                for (auto& seg : img_->segments) {
+                    if (!seg.contains(item.addr)) continue;
+                    size_t off = static_cast<size_t>(item.addr - seg.va);
+                    size_t ptr_sz = static_cast<size_t>(item.size);
+                    size_t j = off;
+                    while (j + ptr_sz <= seg.data.size()) {
+                        va_t zv = 0;
+                        memcpy(&zv, seg.data.data() + j, ptr_sz);
+                        if (zv != 0) break;
+                        j += ptr_sz;
+                    }
+                    run_bytes = j - off;
+                    break;
+                }
+            }
+            c.label = fmt::format("align {:X}h", run_bytes);
+            c.color = IM_COL32(100, 100, 110, 255);
+            break;
+        }
+        case DataStyle::Raw:
+        default: {
+            const char* dir = "db";
+            switch (item.size) {
+                case DataSize::Word:  dir = "dw"; break;
+                case DataSize::Dword: dir = "dd"; break;
+                case DataSize::Qword: dir = "dq"; break;
+                default: break;
+            }
+            u64 val = 0;
+            if (img_) {
+                for (auto& seg : img_->segments) {
+                    if (!seg.contains(item.addr)) continue;
+                    size_t off = static_cast<size_t>(item.addr - seg.va);
+                    size_t sz = static_cast<size_t>(item.size);
+                    if (off + sz <= seg.data.size())
+                        memcpy(&val, seg.data.data() + off, sz);
+                    break;
+                }
+            }
+            c.label = fmt::format("{}    0x{:X}", dir, val);
+            c.color = col::imm();
+            break;
+        }
+        }
+
+        if (nit != db_->names.end() && item.style != DataStyle::Import)
+            c.name_comment = fmt::format("; {}", nit->second);
+
+        data_cache_[a] = std::move(c);
+    }
+}
+
+void DisasmView::rebuild_insn_cache() {
+    insn_cache_.clear();
+    insn_cache_.reserve(db_->insns.size());
+
+    for (auto& insn : db_->insns) {
+        CachedInsnLine c;
+        fmt_hex_bytes(c.hex, insn.bytes, insn.len);
+
+        // pre-build annotation
+        std::string annotation;
+        for (int k = 0; k < insn.op_count && annotation.empty(); ++k) {
+            va_t ref = 0;
+            if (insn.ops[k].type == OpType::Imm && insn.ops[k].val > 0x10000) ref = insn.ops[k].val;
+            else if (insn.ops[k].type == OpType::Mem && insn.ops[k].val) ref = insn.ops[k].val;
+            if (!ref) continue;
+
+            auto sit = str_map_.find(ref);
+            if (sit != str_map_.end()) {
+                auto& s = *sit->second;
+                annotation = s.size() > 36 ? ("\"" + s.substr(0, 36) + "...\"") : ("\"" + s + "\"");
+            }
+            if (annotation.empty()) {
+                for (int off = 1; off <= 4 && annotation.empty(); ++off) {
+                    auto sit2 = str_map_.find(ref - off);
+                    if (sit2 != str_map_.end()) {
+                        auto& s = *sit2->second;
+                        if ((size_t)off < s.size())
+                            annotation = s.size() > 36 ? ("\"" + s.substr(0, 36) + "...\"") : ("\"" + s + "\"");
+                    }
+                }
+            }
+            if (annotation.empty()) {
+                auto nit = db_->names.find(ref);
+                if (nit != db_->names.end() && !insn.is_call() && !insn.is_branch())
+                    annotation = nit->second;
+            }
+        }
+
+        if (annotation.empty()) {
+            std::string ops(insn.op_str);
+            size_t scan_pos = 0;
+            while (scan_pos < ops.size() && annotation.empty()) {
+                if (scan_pos + 2 < ops.size() && ops[scan_pos] == '0' && (ops[scan_pos+1] == 'x' || ops[scan_pos+1] == 'X')) {
+                    char* end = nullptr;
+                    va_t val = std::strtoull(ops.c_str() + scan_pos, &end, 16);
+                    if (val > 0x10000 && end > ops.c_str() + scan_pos + 4) {
+                        auto sit = str_map_.find(val);
+                        if (sit != str_map_.end()) {
+                            auto& s = *sit->second;
+                            annotation = s.size() > 36 ? ("\"" + s.substr(0, 36) + "...\"") : ("\"" + s + "\"");
+                        } else {
+                            auto nit = db_->names.find(val);
+                            if (nit != db_->names.end() && !insn.is_call() && !insn.is_branch())
+                                annotation = nit->second;
+                        }
+                        scan_pos = static_cast<size_t>(end - ops.c_str());
+                    } else {
+                        scan_pos += 2;
+                    }
+                } else if (std::isxdigit((unsigned char)ops[scan_pos]) && scan_pos + 6 < ops.size()) {
+                    char* end = nullptr;
+                    va_t val = std::strtoull(ops.c_str() + scan_pos, &end, 16);
+                    size_t len = static_cast<size_t>(end - (ops.c_str() + scan_pos));
+                    if (val > 0x10000 && len >= 6) {
+                        auto sit = str_map_.find(val);
+                        if (sit != str_map_.end()) {
+                            auto& s = *sit->second;
+                            annotation = s.size() > 36 ? ("\"" + s.substr(0, 36) + "...\"") : ("\"" + s + "\"");
+                        } else {
+                            auto nit = db_->names.find(val);
+                            if (nit != db_->names.end() && !insn.is_call() && !insn.is_branch())
+                                annotation = nit->second;
+                        }
+                        scan_pos += len;
+                    } else {
+                        scan_pos++;
+                    }
+                } else {
+                    scan_pos++;
+                }
+            }
+        }
+
+        c.annotation = std::move(annotation);
+        insn_cache_[insn.addr] = std::move(c);
+    }
 }
 
 void DisasmView::cmd_define_data() {
@@ -59,7 +294,7 @@ void DisasmView::cmd_define_data() {
     DataItem old_item = had_data ? it->second : DataItem{};
     bool had_insn = db_->insns.count(addr) > 0;
     Insn old_insn{};
-    if (had_insn) old_insn = db_->insns.at(addr);
+    if (had_insn) { auto iit = db_->insns.find(addr); old_insn = *iit; }
 
     DataSize next = DataSize::Byte;
     if (had_data) {
@@ -96,7 +331,7 @@ void DisasmView::cmd_define_string() {
     DataItem old_item = had_data ? db_->data_items.at(addr) : DataItem{};
     bool had_insn = db_->insns.count(addr) > 0;
     Insn old_insn{};
-    if (had_insn) old_insn = db_->insns.at(addr);
+    if (had_insn) { auto iit = db_->insns.find(addr); old_insn = *iit; }
 
     db_->define_string(addr);
     dirty_ = true;
@@ -123,7 +358,7 @@ void DisasmView::cmd_undefine() {
     DataItem old_item = had_data ? db_->data_items.at(addr) : DataItem{};
     bool had_insn = db_->insns.count(addr) > 0;
     Insn old_insn{};
-    if (had_insn) old_insn = db_->insns.at(addr);
+    if (had_insn) { auto iit = db_->insns.find(addr); old_insn = *iit; }
 
     db_->undefine(addr);
     dirty_ = true;
@@ -180,7 +415,7 @@ void DisasmView::cmd_nop() {
     va_t addr = cursor_;
     auto it = db_->insns.find(addr);
     if (it == db_->insns.end()) return;
-    u8 len = it->second.len;
+    u8 len = it->len;
 
     std::vector<u8> old_bytes(len);
     for (auto& seg : img_->segments) {
@@ -195,8 +430,17 @@ void DisasmView::cmd_nop() {
     for (auto& seg : img_->segments) {
         if (!seg.contains(addr)) continue;
         size_t off = static_cast<size_t>(addr - seg.va);
-        for (u8 i = 0; i < len && off + i < seg.data.size(); ++i)
-            seg.data[off + i] = 0x90;
+        if (img_->arch == Arch::ARM64) {
+            for (u8 i = 0; i + 3 < len && off + i + 3 < seg.data.size(); i += 4) {
+                seg.data[off + i]     = 0x1F;
+                seg.data[off + i + 1] = 0x20;
+                seg.data[off + i + 2] = 0x03;
+                seg.data[off + i + 3] = 0xD5;
+            }
+        } else {
+            for (u8 i = 0; i < len && off + i < seg.data.size(); ++i)
+                seg.data[off + i] = 0x90;
+        }
         break;
     }
     cmd_force_code();
@@ -251,7 +495,7 @@ void DisasmView::update_reg_highlight() {
 
     auto& func = db_->funcs.at(func_entry);
     for (auto& [ba, bb] : func.blocks) {
-        for (auto& insn : bb.insns) {
+        db_->for_each_insn_in_block(bb, [&](const Insn& insn) {
             for (int k = 0; k < insn.op_count; ++k) {
                 auto& op = insn.ops[k];
                 if (op.type == OpType::Reg && op.reg == highlighted_reg_) {
@@ -259,12 +503,12 @@ void DisasmView::update_reg_highlight() {
                     break;
                 }
                 if (op.type == OpType::Mem &&
-                    (op.mem.base == highlighted_reg_ || op.mem.index == highlighted_reg_)) {
+                    (op.mem_base == highlighted_reg_ || op.mem_index == highlighted_reg_)) {
                     reg_highlight_addrs_.insert(insn.addr);
                     break;
                 }
             }
-        }
+        });
     }
 }
 
@@ -272,6 +516,7 @@ void DisasmView::render() {
     ImGui::Begin("Disassembly");
     if (!db_ || !img_) { ImGui::TextDisabled("No binary loaded"); ImGui::End(); return; }
 
+#ifdef _WIN32
     if (dbg_eng_ && dbg_eng_->is_attached() && !dbg_eng_->is_running()) {
         if (!live_mode_ || scroll_pending_) {
             va_t center = scroll_pending_ ? scroll_to_ : (live_base_ ? live_base_ : debug_rip_);
@@ -298,6 +543,7 @@ void DisasmView::render() {
         ImGui::End();
         return;
     }
+#endif
 
     live_mode_ = false;
 
@@ -349,8 +595,9 @@ void DisasmView::render() {
                     ImVec2 sp = ImGui::GetCursorScreenPos();
                     float aw = ImGui::GetContentRegionAvail().x;
                     if (aw < 100) aw = 1200;
-                    auto hdr = fmt::format("; === {} ===", cur_seg->name);
-                    ImGui::GetWindowDrawList()->AddText(ImVec2(sp.x + 4, sp.y), col::comment(), hdr.c_str());
+                    auto hit = seg_hdr_cache_.find(cur_seg->va);
+                    if (hit != seg_hdr_cache_.end())
+                        ImGui::GetWindowDrawList()->AddText(ImVec2(sp.x + 4, sp.y), col::comment(), hit->second.c_str());
                     ImGui::Dummy(ImVec2(aw, lh));
                 }
             }
@@ -362,7 +609,7 @@ void DisasmView::render() {
             }
             auto it = db_->insns.find(a);
             if (it != db_->insns.end())
-                render_line(i, it->second, lh);
+                render_line(i, *it, lh);
         }
     }
 
@@ -386,117 +633,19 @@ void DisasmView::render_data_line(const DataItem& item, float lh) {
     float x = pos.x + 4;
     float y = pos.y;
 
-    auto addr_s = fmt::format("{:016X}", item.addr);
-    dl->AddText(ImVec2(x, y), is_cursor ? IM_COL32(130, 190, 255, 255) : col::addr(), addr_s.c_str());
+    char addr_buf[17];
+    fmt_addr(addr_buf, item.addr);
+    dl->AddText(ImVec2(x, y), is_cursor ? IM_COL32(130, 190, 255, 255) : col::addr(), addr_buf);
     x += ImGui::CalcTextSize("0000000000000000").x + 14;
 
-    auto nit = db_->names.find(item.addr);
-
-    switch (item.style) {
-    case DataStyle::Import: {
-        std::string func_name;
-        if (nit != db_->names.end()) {
-            auto sep = nit->second.find('!');
-            func_name = (sep != std::string::npos) ? nit->second.substr(sep + 1) : nit->second;
-        } else {
-            func_name = fmt::format("unk_{:X}", item.addr);
+    auto cit = data_cache_.find(item.addr);
+    if (cit != data_cache_.end()) {
+        dl->AddText(ImVec2(x, y), cit->second.color, cit->second.label.c_str());
+        if (!cit->second.name_comment.empty()) {
+            float nx = pos.x + avail_w - ImGui::CalcTextSize(cit->second.name_comment.c_str()).x - 16;
+            if (nx > x + 200)
+                dl->AddText(ImVec2(nx, y), col::comment(), cit->second.name_comment.c_str());
         }
-        const char* sz_kw = (item.size == DataSize::Qword) ? "qword" : "dword";
-        auto lbl = fmt::format("extrn {}:{}", func_name, sz_kw);
-        dl->AddText(ImVec2(x, y), IM_COL32(80, 210, 230, 255), lbl.c_str());
-        break;
-    }
-    case DataStyle::String: {
-        std::string val = "\"";
-        if (img_) {
-            for (auto& seg : img_->segments) {
-                if (!seg.contains(item.addr)) continue;
-                size_t off = static_cast<size_t>(item.addr - seg.va);
-                for (size_t i = off; i < seg.data.size() && seg.data[i]; ++i)
-                    val += static_cast<char>(seg.data[i]);
-                break;
-            }
-        }
-        val += "\", 0";
-        auto lbl = fmt::format("db    {}", val);
-        dl->AddText(ImVec2(x, y), col::str(), lbl.c_str());
-        break;
-    }
-    case DataStyle::Pointer: {
-        u64 val = 0;
-        if (img_) {
-            for (auto& seg : img_->segments) {
-                if (!seg.contains(item.addr)) continue;
-                size_t off = static_cast<size_t>(item.addr - seg.va);
-                size_t sz = static_cast<size_t>(item.size);
-                if (off + sz <= seg.data.size())
-                    memcpy(&val, seg.data.data() + off, sz);
-                break;
-            }
-        }
-        const char* dir = (item.size == DataSize::Qword) ? "dq" : "dd";
-        std::string target_name;
-        auto tit = db_->names.find(static_cast<va_t>(val));
-        if (tit != db_->names.end())
-            target_name = tit->second;
-        else
-            target_name = fmt::format("sub_{:X}", val);
-        auto lbl = fmt::format("{}    offset {}", dir, target_name);
-        dl->AddText(ImVec2(x, y), IM_COL32(100, 160, 255, 255), lbl.c_str());
-        break;
-    }
-    case DataStyle::Align: {
-        size_t run_bytes = static_cast<size_t>(item.size);
-        if (img_) {
-            for (auto& seg : img_->segments) {
-                if (!seg.contains(item.addr)) continue;
-                size_t off = static_cast<size_t>(item.addr - seg.va);
-                size_t ptr_sz = static_cast<size_t>(item.size);
-                size_t j = off;
-                while (j + ptr_sz <= seg.data.size()) {
-                    va_t zv = 0;
-                    memcpy(&zv, seg.data.data() + j, ptr_sz);
-                    if (zv != 0) break;
-                    j += ptr_sz;
-                }
-                run_bytes = j - off;
-                break;
-            }
-        }
-        auto lbl = fmt::format("align {:X}h", run_bytes);
-        dl->AddText(ImVec2(x, y), IM_COL32(100, 100, 110, 255), lbl.c_str());
-        break;
-    }
-    case DataStyle::Raw:
-    default: {
-        const char* dir = "db";
-        switch (item.size) {
-            case DataSize::Word:  dir = "dw"; break;
-            case DataSize::Dword: dir = "dd"; break;
-            case DataSize::Qword: dir = "dq"; break;
-            default: break;
-        }
-        u64 val = 0;
-        if (img_) {
-            for (auto& seg : img_->segments) {
-                if (!seg.contains(item.addr)) continue;
-                size_t off = static_cast<size_t>(item.addr - seg.va);
-                size_t sz = static_cast<size_t>(item.size);
-                if (off + sz <= seg.data.size())
-                    memcpy(&val, seg.data.data() + off, sz);
-                break;
-            }
-        }
-        auto lbl = fmt::format("{}    0x{:X}", dir, val);
-        dl->AddText(ImVec2(x, y), col::imm(), lbl.c_str());
-        break;
-    }
-    }
-
-    if (nit != db_->names.end() && item.style != DataStyle::Import) {
-        float nx = pos.x + avail_w - ImGui::CalcTextSize(nit->second.c_str()).x - 16;
-        if (nx > x + 200)
-            dl->AddText(ImVec2(nx, y), col::comment(), fmt::format("; {}", nit->second).c_str());
     }
 
     ImGui::InvisibleButton("##dl", ImVec2(avail_w, lh));
@@ -517,10 +666,9 @@ void DisasmView::render_line(int idx, const Insn& insn, float lh) {
         ImVec2 hpos = ImGui::GetCursorScreenPos();
         dl->AddRectFilled(hpos, ImVec2(hpos.x + avail_w, hpos.y + lh), IM_COL32(20, 24, 32, 255));
         dl->AddLine(ImVec2(hpos.x, hpos.y), ImVec2(hpos.x + avail_w, hpos.y), IM_COL32(60, 70, 90, 255));
-        auto header = fmt::format(" {} ", fn.name);
-        float tw = ImGui::CalcTextSize(header.c_str()).x;
+        float tw = ImGui::CalcTextSize(fn.name.c_str()).x + ImGui::CalcTextSize("  ").x;
         float cx = hpos.x + (avail_w - tw) * 0.5f;
-        dl->AddText(ImVec2(cx, hpos.y + 1), col::func(), header.c_str());
+        dl->AddText(ImVec2(cx, hpos.y + 1), col::func(), fn.name.c_str());
         ImGui::Dummy(ImVec2(avail_w, lh));
     }
 
@@ -550,15 +698,14 @@ void DisasmView::render_line(int idx, const Insn& insn, float lh) {
     float x = pos.x + 4;
     float y = pos.y;
 
-    auto addr_s = fmt::format("{:016X}", insn.addr);
-    dl->AddText(ImVec2(x, y), is_cursor ? IM_COL32(130, 190, 255, 255) : col::addr(), addr_s.c_str());
+    char addr_buf[17];
+    fmt_addr(addr_buf, insn.addr);
+    dl->AddText(ImVec2(x, y), is_cursor ? IM_COL32(130, 190, 255, 255) : col::addr(), addr_buf);
     x += ImGui::CalcTextSize("0000000000000000").x + 14;
 
-    std::string hex;
-    int nb = std::min<int>(insn.len, 6);
-    for (int b = 0; b < nb; ++b) hex += fmt::format("{:02X} ", insn.bytes[b]);
-    if (insn.len > 6) hex += "..";
-    dl->AddText(ImVec2(x, y), IM_COL32(85, 85, 95, 255), hex.c_str());
+    auto cache_it = insn_cache_.find(insn.addr);
+    const char* hex_str = cache_it != insn_cache_.end() ? cache_it->second.hex : "";
+    dl->AddText(ImVec2(x, y), IM_COL32(85, 85, 95, 255), hex_str);
     x += ImGui::CalcTextSize("00 00 00 00 00 00 ..").x + 10;
 
     ImU32 mc = col::mnem();
@@ -577,91 +724,22 @@ void DisasmView::render_line(int idx, const Insn& insn, float lh) {
     dl->AddText(ImVec2(x, y), mc, insn.mnemonic);
     x += 68;
 
-    std::string annotation;
+    const std::string* annotation_ptr = nullptr;
+    if (cache_it != insn_cache_.end() && !cache_it->second.annotation.empty())
+        annotation_ptr = &cache_it->second.annotation;
+
     if (insn.op_str[0]) {
         bool use_hex = db_->hex_display.count(insn.addr) == 0;
         va_t target = insn.branch_target();
 
         const StackFrame* frame = sfv_ ? sfv_->current_frame() : nullptr;
-        std::string display_ops = frame ? format_operand_with_vars(insn, frame) : std::string(insn.op_str);
-
-        // find reference annotation from structured operands
-        for (int k = 0; k < insn.op_count && annotation.empty(); ++k) {
-            va_t ref = 0;
-            if (insn.ops[k].type == OpType::Imm && insn.ops[k].val > 0x10000) ref = insn.ops[k].val;
-            else if (insn.ops[k].type == OpType::Mem && insn.ops[k].val) ref = insn.ops[k].val;
-            if (!ref) continue;
-
-            // exact match
-            auto sit = str_map_.find(ref);
-            if (sit != str_map_.end()) {
-                auto& s = *sit->second;
-                annotation = s.size() > 36 ? ("\"" + s.substr(0, 36) + "...\"") : ("\"" + s + "\"");
-            }
-            // check if ref points INTO a string (offset within first 4 bytes)
-            if (annotation.empty()) {
-                for (int off = 1; off <= 4 && annotation.empty(); ++off) {
-                    auto sit2 = str_map_.find(ref - off);
-                    if (sit2 != str_map_.end()) {
-                        auto& s = *sit2->second;
-                        if ((size_t)off < s.size())
-                            annotation = s.size() > 36 ? ("\"" + s.substr(0, 36) + "...\"") : ("\"" + s + "\"");
-                    }
-                }
-            }
-            if (annotation.empty()) {
-                auto nit = db_->names.find(ref);
-                if (nit != db_->names.end() && !insn.is_call() && !insn.is_branch())
-                    annotation = nit->second;
-            }
-        }
-
-        // fallback: scan op_str for hex addresses matching strings/names
-        if (annotation.empty()) {
-            std::string ops(insn.op_str);
-            size_t scan_pos = 0;
-            while (scan_pos < ops.size() && annotation.empty()) {
-                // find hex patterns: 0x... or raw hex sequences 7+ chars
-                if (scan_pos + 2 < ops.size() && ops[scan_pos] == '0' && (ops[scan_pos+1] == 'x' || ops[scan_pos+1] == 'X')) {
-                    char* end = nullptr;
-                    va_t val = std::strtoull(ops.c_str() + scan_pos, &end, 16);
-                    if (val > 0x10000 && end > ops.c_str() + scan_pos + 4) {
-                        auto sit = str_map_.find(val);
-                        if (sit != str_map_.end()) {
-                            auto& s = *sit->second;
-                            annotation = s.size() > 36 ? ("\"" + s.substr(0, 36) + "...\"") : ("\"" + s + "\"");
-                        } else {
-                            auto nit = db_->names.find(val);
-                            if (nit != db_->names.end() && !insn.is_call() && !insn.is_branch())
-                                annotation = nit->second;
-                        }
-                        scan_pos = static_cast<size_t>(end - ops.c_str());
-                    } else {
-                        scan_pos += 2;
-                    }
-                } else if (std::isxdigit((unsigned char)ops[scan_pos]) && scan_pos + 6 < ops.size()) {
-                    // try parsing as raw hex (like in Intel syntax: 7FFD1234h)
-                    char* end = nullptr;
-                    va_t val = std::strtoull(ops.c_str() + scan_pos, &end, 16);
-                    size_t len = static_cast<size_t>(end - (ops.c_str() + scan_pos));
-                    if (val > 0x10000 && len >= 6) {
-                        auto sit = str_map_.find(val);
-                        if (sit != str_map_.end()) {
-                            auto& s = *sit->second;
-                            annotation = s.size() > 36 ? ("\"" + s.substr(0, 36) + "...\"") : ("\"" + s + "\"");
-                        } else {
-                            auto nit = db_->names.find(val);
-                            if (nit != db_->names.end() && !insn.is_call() && !insn.is_branch())
-                                annotation = nit->second;
-                        }
-                        scan_pos += len;
-                    } else {
-                        scan_pos++;
-                    }
-                } else {
-                    scan_pos++;
-                }
-            }
+        std::string display_ops_buf;
+        const char* display_ops;
+        if (frame) {
+            display_ops_buf = format_operand_with_vars(insn, frame);
+            display_ops = display_ops_buf.c_str();
+        } else {
+            display_ops = insn.op_str;
         }
 
         if ((insn.is_call() || insn.is_branch()) && target) {
@@ -669,43 +747,49 @@ void DisasmView::render_line(int idx, const Insn& insn, float lh) {
             if (nit != db_->names.end())
                 dl->AddText(ImVec2(x, y), IM_COL32(120, 190, 255, 255), nit->second.c_str());
             else
-                dl->AddText(ImVec2(x, y), col::imm(), display_ops.c_str());
+                dl->AddText(ImVec2(x, y), col::imm(), display_ops);
         } else {
             if (!use_hex) {
+                if (display_ops_buf.empty()) display_ops_buf = insn.op_str;
                 for (int k = 0; k < insn.op_count; ++k) {
                     if (insn.ops[k].type == OpType::Imm) {
                         auto hx = fmt::format("0x{:X}", insn.ops[k].val);
                         auto dec = fmt::format("{}", insn.ops[k].val);
-                        auto p = display_ops.find(hx);
-                        if (p != std::string::npos) display_ops.replace(p, hx.size(), dec);
+                        auto p = display_ops_buf.find(hx);
+                        if (p != std::string::npos) display_ops_buf.replace(p, hx.size(), dec);
                     }
                 }
+                dl->AddText(ImVec2(x, y), col::reg(), display_ops_buf.c_str());
+            } else {
+                dl->AddText(ImVec2(x, y), col::reg(), display_ops);
             }
-            dl->AddText(ImVec2(x, y), col::reg(), display_ops.c_str());
         }
     }
     x += 220;
 
     auto xit = db_->xrefs_to.find(insn.addr);
     if (xit != db_->xrefs_to.end() && !xit->second.empty()) {
-        auto xr_s = fmt::format("[{}x]", xit->second.size());
-        dl->AddText(ImVec2(x, y), col::xref(), xr_s.c_str());
+        char xr_buf[16];
+        snprintf(xr_buf, sizeof(xr_buf), "[%dx]", (int)xit->second.size());
+        dl->AddText(ImVec2(x, y), col::xref(), xr_buf);
     }
     x += 44;
 
-    // comment column: user comment > annotation > auto-comment
-    auto cit = db_->comments.find(insn.addr);
-    if (cit != db_->comments.end()) {
-        auto ct = fmt::format("; {}", cit->second);
-        dl->AddText(ImVec2(x, y), IM_COL32(90, 140, 90, 255), ct.c_str());
-    } else if (!annotation.empty()) {
-        auto ct = fmt::format("; {}", annotation);
-        dl->AddText(ImVec2(x, y), col::str(), ct.c_str());
+    auto comment_it = db_->comments.find(insn.addr);
+    if (comment_it != db_->comments.end()) {
+        char ct_buf[256];
+        snprintf(ct_buf, sizeof(ct_buf), "; %s", comment_it->second.c_str());
+        dl->AddText(ImVec2(x, y), IM_COL32(90, 140, 90, 255), ct_buf);
+    } else if (annotation_ptr) {
+        char ct_buf[256];
+        snprintf(ct_buf, sizeof(ct_buf), "; %s", annotation_ptr->c_str());
+        dl->AddText(ImVec2(x, y), col::str(), ct_buf);
     } else if ((insn.is_call() || insn.is_branch()) && insn.branch_target()) {
         auto nit = db_->names.find(insn.branch_target());
         if (nit != db_->names.end()) {
-            auto ct = fmt::format("; {}", nit->second);
-            dl->AddText(ImVec2(x, y), IM_COL32(65, 85, 65, 255), ct.c_str());
+            char ct_buf[256];
+            snprintf(ct_buf, sizeof(ct_buf), "; %s", nit->second.c_str());
+            dl->AddText(ImVec2(x, y), IM_COL32(65, 85, 65, 255), ct_buf);
         }
     }
 
@@ -722,8 +806,8 @@ void DisasmView::render_line(int idx, const Insn& insn, float lh) {
                 highlighted_reg_ = insn.ops[k].reg;
                 break;
             }
-            if (insn.ops[k].type == OpType::Mem && insn.ops[k].mem.base) {
-                highlighted_reg_ = insn.ops[k].mem.base;
+            if (insn.ops[k].type == OpType::Mem && insn.ops[k].mem_base) {
+                highlighted_reg_ = insn.ops[k].mem_base;
                 break;
             }
         }
@@ -761,19 +845,20 @@ void DisasmView::render_line(int idx, const Insn& insn, float lh) {
         if (ImGui::MenuItem("NOP out")) cmd_nop();
         ImGui::Separator();
         if (ImGui::MenuItem("Copy address")) {
-            ImGui::SetClipboardText(addr_s.c_str());
+            ImGui::SetClipboardText(addr_buf);
         }
         if (ImGui::MenuItem("Generate Signature", "Ctrl+Shift+S")) {
             if (sig_cb_) sig_cb_(insn.addr);
         }
         if (ImGui::MenuItem("Copy line")) {
-            auto full = fmt::format("{} {} {}", addr_s, insn.mnemonic, insn.op_str);
+            auto full = fmt::format("{} {} {}", addr_buf, insn.mnemonic, insn.op_str);
             ImGui::SetClipboardText(full.c_str());
         }
         if (ImGui::BeginMenu("Copy as")) {
             if (ImGui::MenuItem("C array")) {
                 std::string c = "unsigned char data[] = { ";
-                for (u8 b = 0; b < insn.len; ++b) {
+                u8 copy_len = std::min<u8>(insn.len, sizeof(insn.bytes));
+                for (u8 b = 0; b < copy_len; ++b) {
                     if (b > 0) c += ", ";
                     c += fmt::format("0x{:02X}", insn.bytes[b]);
                 }
@@ -782,14 +867,16 @@ void DisasmView::render_line(int idx, const Insn& insn, float lh) {
             }
             if (ImGui::MenuItem("Python bytes")) {
                 std::string py = "b'";
-                for (u8 b = 0; b < insn.len; ++b)
+                u8 copy_len = std::min<u8>(insn.len, sizeof(insn.bytes));
+                for (u8 b = 0; b < copy_len; ++b)
                     py += fmt::format("\\x{:02x}", insn.bytes[b]);
                 py += "'";
                 ImGui::SetClipboardText(py.c_str());
             }
             if (ImGui::MenuItem("YARA hex string")) {
                 std::string yara = "{ ";
-                for (u8 b = 0; b < insn.len; ++b) {
+                u8 copy_len = std::min<u8>(insn.len, sizeof(insn.bytes));
+                for (u8 b = 0; b < copy_len; ++b) {
                     if (b > 0) yara += " ";
                     if (b >= 2 && insn.op_count > 0 &&
                         (insn.ops[0].type == OpType::Imm || insn.ops[0].type == OpType::Mem))
@@ -808,6 +895,7 @@ void DisasmView::render_line(int idx, const Insn& insn, float lh) {
     ImGui::PopID();
 }
 
+#ifdef _WIN32
 void DisasmView::render_live(float lh) {
     ImGui::BeginChild("##dasm_live", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar);
 
@@ -902,7 +990,8 @@ void DisasmView::render_live_line(int idx, const Insn& insn, float lh) {
     x += ImGui::CalcTextSize("0000000000000000").x + 14;
 
     std::string hex;
-    int nb = std::min<int>(insn.len, 6);
+    int nb = std::min<int>(insn.len, (int)sizeof(insn.bytes));
+    nb = std::min(nb, 6);
     for (int b = 0; b < nb; ++b) hex += fmt::format("{:02X} ", insn.bytes[b]);
     if (insn.len > 6) hex += "..";
     dl->AddText(ImVec2(x, y), IM_COL32(85, 85, 95, 255), hex.c_str());
@@ -942,5 +1031,6 @@ void DisasmView::render_live_line(int idx, const Insn& insn, float lh) {
 
     ImGui::PopID();
 }
+#endif
 
 }

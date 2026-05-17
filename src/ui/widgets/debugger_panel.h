@@ -1,12 +1,18 @@
 #pragma once
-#include "debugger/debug_engine.h"
-#include "debugger/process_list.h"
 #include <imgui.h>
 #include <functional>
 #include <string>
 #include <deque>
+#include "core/types.h"
+
+#ifdef _WIN32
+#include "debugger/debug_engine.h"
+#include "debugger/process_list.h"
+#endif
 
 namespace hype {
+
+#ifdef _WIN32
 
 class DebuggerPanel {
 public:
@@ -59,5 +65,34 @@ private:
     std::deque<std::string> log_lines_;
     bool log_scroll_ = true;
 };
+
+#else
+
+class DebuggerPanel {
+public:
+    using NavCB = std::function<void(va_t)>;
+    using OpenCB = std::function<void(const std::string&)>;
+
+    void set_nav(NavCB) {}
+    void set_open_cb(OpenCB) {}
+    void render() {}
+    bool& visible() { return visible_; }
+
+    void show_attach_dialog() {}
+    void toggle_breakpoint(va_t) {}
+    void on_step_into() {}
+    void on_step_over() {}
+    void on_step_out() {}
+    void on_run() {}
+    void on_pause() {}
+
+    va_t current_rip() const { return 0; }
+    bool has_breakpoint(va_t) const { return false; }
+
+private:
+    bool visible_ = false;
+};
+
+#endif
 
 }

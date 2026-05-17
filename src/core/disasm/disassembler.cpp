@@ -73,7 +73,7 @@ bool Disassembler::decode(va_t addr, const u8* data, size_t len, Insn& out) {
     out.len = zi.length;
     out.mnemonic_id = zi.mnemonic;
     out.type = classify(zi.mnemonic);
-    std::memcpy(out.bytes, data, zi.length);
+    std::memcpy(out.bytes, data, std::min<size_t>(zi.length, sizeof(out.bytes)));
 
     char buf[256];
     ZydisFormatterFormatInstruction(&impl_->formatter, &zi, zo,
@@ -90,7 +90,7 @@ bool Disassembler::decode(va_t addr, const u8* data, size_t len, Insn& out) {
     }
 
     out.op_count = 0;
-    for (u8 i = 0; i < zi.operand_count_visible && i < 4; ++i) {
+    for (u8 i = 0; i < zi.operand_count_visible && i < 3; ++i) {
         auto& zop = zo[i];
         auto& op = out.ops[i];
         op.size = zop.size;
@@ -109,10 +109,10 @@ bool Disassembler::decode(va_t addr, const u8* data, size_t len, Insn& out) {
             break;
         case ZYDIS_OPERAND_TYPE_MEMORY:
             op.type = OpType::Mem;
-            op.mem.base = zop.mem.base;
-            op.mem.index = zop.mem.index;
-            op.mem.scale = zop.mem.scale;
-            op.mem.disp = zop.mem.disp.value;
+            op.mem_base = zop.mem.base;
+            op.mem_index = zop.mem.index;
+            op.scale = zop.mem.scale;
+            op.mem_disp = static_cast<i32>(zop.mem.disp.value);
             if (zop.mem.base == ZYDIS_REGISTER_RIP || zop.mem.base == ZYDIS_REGISTER_EIP)
                 ZydisCalcAbsoluteAddress(&zi, &zop, addr, &op.val);
             break;
@@ -122,6 +122,7 @@ bool Disassembler::decode(va_t addr, const u8* data, size_t len, Insn& out) {
         }
         ++out.op_count;
     }
+    out.update_branch_target();
     return true;
 }
 
@@ -132,6 +133,7 @@ std::vector<Insn> Disassembler::decode_range(va_t start, const u8* data, size_t 
     while (off < len) {
         Insn insn{};
         if (decode(start + off, data + off, len - off, insn)) {
+            if (insn.len == 0) insn.len = 1;
             off += insn.len;
             result.push_back(std::move(insn));
         } else {

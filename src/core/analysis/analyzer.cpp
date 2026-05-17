@@ -133,10 +133,10 @@ void Analyzer::run() {
     progress_ = 0.88f;
 
     detect_noreturn();
-    progress_ = 0.87f;
+    progress_ = 0.89f;
 
     detect_tail_calls();
-    progress_ = 0.89f;
+    progress_ = 0.91f;
 
     detect_calling_conventions();
     progress_ = 0.91f;
@@ -185,41 +185,49 @@ void Analyzer::linear_sweep() {
         }));
     }
     for (auto& f : futures) {
-        for (auto& insn : f.get())
-            tentative_[insn.addr] = std::move(insn);
+        auto chunk = f.get();
+        tentative_.merge_sorted_range(std::move(chunk));
     }
 }
 
 void Analyzer::merge_tentative() {
     if (tentative_.empty()) return;
 
+    db_.insns.finalize();
     std::vector<std::pair<va_t, va_t>> confirmed;
     confirmed.reserve(db_.insns.size());
-    for (auto& [addr, insn] : db_.insns)
-        confirmed.emplace_back(addr, addr + insn.len);
+    for (auto& insn : db_.insns)
+        confirmed.emplace_back(insn.addr, insn.addr + insn.len);
     std::sort(confirmed.begin(), confirmed.end());
 
-    for (auto& [addr, insn] : tentative_) {
-        if (db_.insns.count(addr)) continue;
-        if (!is_code_addr(addr)) continue;
+    std::vector<Insn> accepted;
+    accepted.reserve(tentative_.size() / 2);
 
-        va_t end = addr + insn.len;
+    for (auto& insn : tentative_) {
+        if (db_.insns.count(insn.addr)) continue;
+        if (!is_code_addr(insn.addr)) continue;
+
+        va_t end = insn.addr + insn.len;
 
         auto it = std::lower_bound(confirmed.begin(), confirmed.end(),
-            std::make_pair(addr, va_t(0)));
+            std::make_pair(insn.addr, va_t(0)));
 
         bool overlaps = false;
         if (it != confirmed.begin()) {
             auto prev = std::prev(it);
-            if (prev->second > addr) overlaps = true;
+            if (prev->second > insn.addr) overlaps = true;
         }
         if (!overlaps && it != confirmed.end() && it->first < end)
             overlaps = true;
 
         if (!overlaps)
-            db_.insns[addr] = std::move(insn);
+            accepted.push_back(insn);
     }
     tentative_.clear();
+
+    std::sort(accepted.begin(), accepted.end(),
+        [](const Insn& a, const Insn& b) { return a.addr < b.addr; });
+    db_.insns.merge_sorted_range(std::move(accepted));
     spdlog::info("merge: {} confirmed insns", db_.insns.size());
 }
 
@@ -249,7 +257,7 @@ void Analyzer::descend(va_t addr, std::unordered_set<va_t>& visited) {
             Insn insn{};
             if (!decode_insn(cur + off, ptr + off, max_len - off, insn))
                 break;
-            db_.insns[insn.addr] = insn;
+            db_.insns.insert(insn);
             off += insn.len;
 
             if (insn.is_ret()) break;
@@ -264,6 +272,7 @@ void Analyzer::descend(va_t addr, std::unordered_set<va_t>& visited) {
             }
         }
     }
+    db_.insns.finalize();
 }
 
 void Analyzer::detect_functions() {
@@ -278,7 +287,7 @@ void Analyzer::detect_functions() {
     }
 
     // call targets
-    for (auto& [addr, insn] : db_.insns) {
+    for (auto& insn : db_.insns) {
         if (insn.is_call()) {
             va_t t = insn.branch_target();
             if (t && db_.insns.count(t)) entries.insert(t);
@@ -347,24 +356,16 @@ void Analyzer::remove_junk_code() {
     std::unordered_set<va_t> in_func;
     for (auto& [entry, func] : db_.funcs) {
         for (auto& [ba, bb] : func.blocks) {
-            va_t cur = bb.start;
-            while (cur < bb.end) {
-                in_func.insert(cur);
-                auto it = db_.insns.find(cur);
-                if (it == db_.insns.end()) break;
-                cur += it->second.len;
-            }
+            db_.for_each_insn_in_block(bb, [&](const Insn& insn) {
+                in_func.insert(insn.addr);
+            });
         }
     }
 
-    // remove instructions not in any function that are clearly junk:
-    // - null bytes (00 00 = add [rax], al)
-    // - int3 padding (CC)
-    // - nop padding (90)
-    // - sequences of identical 2-byte instructions (padding patterns)
+    // remove instructions not in any function that are clearly junk
     std::vector<va_t> to_remove;
-    for (auto& [addr, insn] : db_.insns) {
-        if (in_func.count(addr)) continue;
+    for (auto& insn : db_.insns) {
+        if (in_func.count(insn.addr)) continue;
 
         bool junk = false;
         if (insn.len <= 2 && insn.bytes[0] == 0x00 && (insn.len == 1 || insn.bytes[1] == 0x00))
@@ -374,7 +375,7 @@ void Analyzer::remove_junk_code() {
         if (insn.len == 1 && insn.bytes[0] == 0x90)
             junk = true;
 
-        if (junk) to_remove.push_back(addr);
+        if (junk) to_remove.push_back(insn.addr);
     }
 
     for (va_t a : to_remove)
@@ -399,8 +400,8 @@ void Analyzer::build_cfgs() {
             va_t cur = bb_start;
 
             while (db_.insns.count(cur)) {
-                auto& insn = db_.insns[cur];
-                bb.insns.push_back(insn);
+                auto it = db_.insns.find(cur);
+                auto& insn = *it;
                 cur += insn.len;
 
                 if (insn.is_ret()) break;
@@ -439,17 +440,21 @@ void Analyzer::detect_switches() {
         if (!func.analyzed) continue;
 
         for (auto& [ba, block] : func.blocks) {
-            if (block.insns.size() < 2) continue;
-            auto& last = block.insns.back();
+            // Need at least 2 insns in the block
+            auto blk_begin = db_.insns.range_begin(block.start);
+            auto blk_end = db_.insns.range_end(block.end);
+            if (blk_begin == blk_end) continue;
+            auto blk_last = std::prev(blk_end);
+            if (blk_last == blk_begin) continue; // less than 2
+
+            auto& last = *blk_last;
             if (last.type != InsnType::Jmp) continue;
 
-            // Pattern 1: jmp reg (indirect through register, table was loaded)
-            // Pattern 2: jmp [reg*scale + table_addr]
             if (last.op_count < 1) continue;
             auto& op = last.ops[0];
 
             // Direct memory operand: jmp [reg*8 + table_addr]
-            if (op.type == OpType::Mem && op.mem.base == 0 && op.mem.index != 0 &&
+            if (op.type == OpType::Mem && op.mem_base == 0 && op.mem_index != 0 &&
                 op.val != 0) {
                 va_t table_addr = op.val;
                 size_t max_len = 0;
@@ -464,19 +469,16 @@ void Analyzer::detect_switches() {
                     std::memcpy(&target, tbl + i * 8, 8);
                     if (!is_code_addr(target)) break;
                     block.succs.push_back(target);
-                    if (!func.blocks.count(target)) {
-                        // add to CFG worklist — simplified: just record the edge
-                    }
                 }
                 ++tables_found;
                 continue;
             }
 
-            // RIP-relative LEA pattern: look back for lea+movsxd pattern
-            // scan backwards for a LEA with rip-relative addressing
+            // RIP-relative LEA pattern
             va_t table_base = 0;
-            for (int j = static_cast<int>(block.insns.size()) - 2; j >= 0; --j) {
-                auto& prev = block.insns[j];
+            for (auto rit = blk_last; rit != blk_begin; ) {
+                --rit;
+                auto& prev = *rit;
                 if (prev.type == InsnType::Lea && prev.op_count >= 2 &&
                     prev.ops[1].type == OpType::Mem && prev.ops[1].val != 0) {
                     table_base = prev.ops[1].val;
@@ -485,19 +487,18 @@ void Analyzer::detect_switches() {
             }
             if (!table_base) continue;
 
-            // Look for bound: scan block preds for cmp+ja pattern
             u32 max_cases = 64;
             for (va_t pred_addr : block.preds) {
                 auto pit = func.blocks.find(pred_addr);
                 if (pit == func.blocks.end()) continue;
                 auto& pblk = pit->second;
-                for (auto& pi : pblk.insns) {
+                db_.for_each_insn_in_block(pblk, [&](const Insn& pi) {
                     if (pi.type == InsnType::Cmp && pi.op_count >= 2 &&
                         pi.ops[1].type == OpType::Imm) {
                         max_cases = static_cast<u32>(pi.ops[1].val) + 1;
                         if (max_cases > 512) max_cases = 512;
                     }
-                }
+                });
             }
 
             size_t max_len = 0;
@@ -521,21 +522,21 @@ void Analyzer::detect_switches() {
 }
 
 void Analyzer::build_xrefs() {
-    for (auto& [addr, insn] : db_.insns) {
+    for (auto& insn : db_.insns) {
         if (insn.is_call()) {
             va_t t = insn.branch_target();
-            if (t) db_.add_xref({addr, t, XrefType::CodeCall});
+            if (t) db_.add_xref({insn.addr, t, XrefType::CodeCall});
         } else if (insn.is_branch()) {
             va_t t = insn.branch_target();
-            if (t) db_.add_xref({addr, t, XrefType::CodeJump});
+            if (t) db_.add_xref({insn.addr, t, XrefType::CodeJump});
         }
         for (u8 i = 0; i < insn.op_count; ++i) {
             auto& op = insn.ops[i];
             if (op.type == OpType::Mem && op.val)
-                db_.add_xref({addr, op.val, XrefType::DataRead});
+                db_.add_xref({insn.addr, op.val, XrefType::DataRead});
             else if (op.type == OpType::Imm && op.val > img_.base &&
                      op.val < img_.base + 0x10000000)
-                db_.add_xref({addr, op.val, XrefType::DataOffset});
+                db_.add_xref({insn.addr, op.val, XrefType::DataOffset});
         }
     }
 }
@@ -570,13 +571,13 @@ void Analyzer::find_string_refs() {
         str_addrs.insert(addr);
 
     u32 refs_added = 0;
-    for (auto& [addr, insn] : db_.insns) {
+    for (auto& insn : db_.insns) {
         if (insn.type != InsnType::Lea) continue;
         // LEA reg, [rip+X] — operand 1 is mem with computed VA
         for (u8 i = 0; i < insn.op_count; ++i) {
             auto& op = insn.ops[i];
             if (op.type == OpType::Mem && op.val && str_addrs.count(op.val)) {
-                db_.add_xref({addr, op.val, XrefType::DataOffset});
+                db_.add_xref({insn.addr, op.val, XrefType::DataOffset});
                 ++refs_added;
             }
         }
@@ -637,7 +638,7 @@ void Analyzer::detect_vtables() {
 
 void Analyzer::detect_globals() {
     u32 found = 0;
-    for (auto& [addr, insn] : db_.insns) {
+    for (auto& insn : db_.insns) {
         for (u8 i = 0; i < insn.op_count; ++i) {
             auto& op = insn.ops[i];
             if (op.type != OpType::Mem || op.val == 0) continue;
@@ -713,20 +714,24 @@ void Analyzer::detect_noreturn() {
         if (func.analyzed && !func.blocks.empty()) {
             bool has_ret = false;
             for (auto& [ba, bb] : func.blocks) {
-                for (auto& insn : bb.insns) {
-                    if (insn.is_ret()) { has_ret = true; break; }
-                }
-                if (has_ret) break;
+                if (db_.for_each_insn_in_block_break(bb, [](const Insn& insn) {
+                    return insn.is_ret();
+                })) { has_ret = true; break; }
             }
             if (!has_ret) {
                 bool has_exit_path = false;
                 for (auto& [ba, bb] : func.blocks) {
-                    if (bb.succs.empty() && !bb.insns.empty() && !bb.insns.back().is_ret()) {
-                        auto& last = bb.insns.back();
-                        if (last.is_call()) {
-                            va_t t = last.branch_target();
-                            if (t && db_.funcs.count(t) && db_.funcs[t].noreturn)
-                                continue;
+                    if (bb.succs.empty()) {
+                        // Check if last insn in block is a call to noreturn
+                        auto blk_end_it = db_.insns.range_end(bb.end);
+                        auto blk_beg_it = db_.insns.range_begin(bb.start);
+                        if (blk_beg_it != blk_end_it) {
+                            auto last_it = std::prev(blk_end_it);
+                            if (!last_it->is_ret() && last_it->is_call()) {
+                                va_t t = last_it->branch_target();
+                                if (t && db_.funcs.count(t) && db_.funcs[t].noreturn)
+                                    continue;
+                            }
                         }
                     }
                     if (!bb.succs.empty()) has_exit_path = true;
@@ -751,8 +756,11 @@ void Analyzer::detect_tail_calls() {
             if (bb.end > func_end) func_end = bb.end;
 
         for (auto& [ba, bb] : func.blocks) {
-            if (bb.insns.empty()) continue;
-            auto& last = bb.insns.back();
+            auto blk_begin = db_.insns.range_begin(bb.start);
+            auto blk_end = db_.insns.range_end(bb.end);
+            if (blk_begin == blk_end) continue;
+            auto last_it = std::prev(blk_end);
+            auto& last = *last_it;
             if (last.type != InsnType::Jmp) continue;
 
             va_t target = last.branch_target();
@@ -799,14 +807,10 @@ void Analyzer::detect_calling_conventions() {
 
         bool has_ret_n = false;
         for (auto& [ba, bb] : func.blocks) {
-            for (auto& insn : bb.insns) {
-                if (insn.is_ret() && insn.op_count > 0 && insn.ops[0].type == OpType::Imm &&
-                    insn.ops[0].val > 0) {
-                    has_ret_n = true;
-                    break;
-                }
-            }
-            if (has_ret_n) break;
+            if (db_.for_each_insn_in_block_break(bb, [](const Insn& insn) {
+                return insn.is_ret() && insn.op_count > 0 && insn.ops[0].type == OpType::Imm &&
+                    insn.ops[0].val > 0;
+            })) { has_ret_n = true; break; }
         }
 
         if (has_ret_n)
@@ -830,7 +834,7 @@ void Analyzer::propagate_dataflow() {
             if (bit == func.blocks.end()) continue;
             auto& bb = bit->second;
 
-            for (auto& insn : bb.insns) {
+            db_.for_each_insn_in_block(bb, [&](const Insn& insn) {
                 if (insn.type == InsnType::Mov && insn.op_count >= 2 &&
                     insn.ops[0].type == OpType::Reg && insn.ops[1].type == OpType::Imm) {
                     reg_vals[insn.ops[0].reg] = insn.ops[1].val;
@@ -856,10 +860,10 @@ void Analyzer::propagate_dataflow() {
                 }
                 else if ((insn.is_call() || insn.type == InsnType::Jmp) &&
                          insn.op_count > 0 && insn.ops[0].type == OpType::Mem &&
-                         insn.ops[0].mem.base != 0 && insn.ops[0].val == 0) {
-                    auto it = reg_vals.find(insn.ops[0].mem.base);
+                         insn.ops[0].mem_base != 0 && insn.ops[0].val == 0) {
+                    auto it = reg_vals.find(insn.ops[0].mem_base);
                     if (it != reg_vals.end() && it->second != 0) {
-                        va_t effective = it->second + insn.ops[0].mem.disp;
+                        va_t effective = it->second + insn.ops[0].mem_disp;
                         size_t max_len = 0;
                         const u8* ptr = va_to_ptr(effective, &max_len);
                         if (ptr && max_len >= 8) {
@@ -875,7 +879,7 @@ void Analyzer::propagate_dataflow() {
                 }
 
                 if (insn.is_call()) reg_vals.clear();
-            }
+            });
         }
     }
     spdlog::info("dataflow: resolved {} indirect call/jump targets", resolved);
@@ -913,21 +917,22 @@ void Analyzer::detect_loops() {
                 for (va_t lb : loop_blocks) {
                     auto lbit = func.blocks.find(lb);
                     if (lbit == func.blocks.end()) continue;
-                    for (auto& insn : lbit->second.insns) {
+                    bool found = db_.for_each_insn_in_block_break(lbit->second, [&](const Insn& insn) {
                         if (std::strcmp(insn.mnemonic, "inc") == 0 && insn.op_count > 0 &&
                             insn.ops[0].type == OpType::Reg) {
                             loop.induction_reg = insn.ops[0].reg;
-                            goto found_ind;
+                            return true;
                         }
                         if (insn.type == InsnType::Add && insn.op_count >= 2 &&
                             insn.ops[0].type == OpType::Reg &&
                             insn.ops[1].type == OpType::Imm && insn.ops[1].val == 1) {
                             loop.induction_reg = insn.ops[0].reg;
-                            goto found_ind;
+                            return true;
                         }
-                    }
+                        return false;
+                    });
+                    if (found) break;
                 }
-                found_ind:
                 func.loops.push_back(loop);
                 ++count;
             }
@@ -946,24 +951,23 @@ void Analyzer::recover_structs() {
         std::unordered_map<u16, std::vector<Access>> accesses;
 
         for (auto& [ba, bb] : func.blocks) {
-            for (auto& insn : bb.insns) {
+            db_.for_each_insn_in_block(bb, [&](const Insn& insn) {
                 for (u8 i = 0; i < insn.op_count; ++i) {
                     auto& op = insn.ops[i];
                     if (op.type != OpType::Mem) continue;
-                    if (op.mem.base == 0) continue;
-                    // skip RSP/RBP-based (stack frame)
-                    if (op.mem.base == 4 || op.mem.base == 5) continue; // RSP=4, RBP=5
-                    if (op.mem.base == 20 || op.mem.base == 21) continue; // x64 RSP/RBP
-                    if (op.mem.disp < 0) continue;
-                    if (op.mem.disp > 4096) continue;
+                    if (op.mem_base == 0) continue;
+                    if (op.mem_base == 4 || op.mem_base == 5) continue;
+                    if (op.mem_base == 20 || op.mem_base == 21) continue;
+                    if (op.mem_disp < 0) continue;
+                    if (op.mem_disp > 4096) continue;
 
                     Access a;
-                    a.base_reg = op.mem.base;
-                    a.offset = op.mem.disp;
+                    a.base_reg = op.mem_base;
+                    a.offset = op.mem_disp;
                     a.size = op.size ? op.size : 8;
                     accesses[a.base_reg].push_back(a);
                 }
-            }
+            });
         }
 
         for (auto& [reg, accs] : accesses) {
@@ -1097,12 +1101,14 @@ void Analyzer::detect_main() {
         if (!func.analyzed) continue;
 
         for (auto& [ba, bb] : func.blocks) {
-            for (auto& insn : bb.insns) {
-                if (!insn.is_call()) continue;
+            bool found_main = false;
+            db_.for_each_insn_in_block(bb, [&](const Insn& insn) {
+                if (found_main) return;
+                if (!insn.is_call()) return;
                 va_t target = insn.branch_target();
-                if (!target) continue;
-                if (!db_.funcs.count(target)) continue;
-                if (crt_starters.count(db_.funcs[target].name)) continue;
+                if (!target) return;
+                if (!db_.funcs.count(target)) return;
+                if (crt_starters.count(db_.funcs[target].name)) return;
 
                 auto& callee = db_.funcs[target];
                 bool is_winmain = func.name.find("WinMain") != std::string::npos;
@@ -1115,8 +1121,9 @@ void Analyzer::detect_main() {
                     db_.set_name(target, "main");
                 }
                 spdlog::info("detected {} at {:X}", callee.name, target);
-                return;
-            }
+                found_main = true;
+            });
+            if (found_main) return;
         }
     }
 
@@ -1125,28 +1132,32 @@ void Analyzer::detect_main() {
     if (eit == db_.funcs.end() || !eit->second.analyzed) return;
 
     for (auto& [ba, bb] : eit->second.blocks) {
-        for (auto& insn : bb.insns) {
-            if (!insn.is_call()) continue;
+        bool found_main = false;
+        db_.for_each_insn_in_block(bb, [&](const Insn& insn) {
+            if (found_main) return;
+            if (!insn.is_call()) return;
             va_t stub = insn.branch_target();
-            if (!stub || !db_.funcs.count(stub)) continue;
+            if (!stub || !db_.funcs.count(stub)) return;
             auto& stub_func = db_.funcs[stub];
-            if (!stub_func.analyzed) continue;
+            if (!stub_func.analyzed) return;
 
             for (auto& [ba2, bb2] : stub_func.blocks) {
-                for (auto& ins2 : bb2.insns) {
-                    if (!ins2.is_call()) continue;
+                db_.for_each_insn_in_block(bb2, [&](const Insn& ins2) {
+                    if (found_main) return;
+                    if (!ins2.is_call()) return;
                     va_t target = ins2.branch_target();
-                    if (!target || !db_.funcs.count(target)) continue;
+                    if (!target || !db_.funcs.count(target)) return;
                     auto& callee = db_.funcs[target];
-                    if (callee.name.rfind("sub_", 0) != 0) continue;
+                    if (callee.name.rfind("sub_", 0) != 0) return;
 
                     callee.name = "main";
                     db_.set_name(target, "main");
                     spdlog::info("detected main at {:X} (via entry stub)", target);
-                    return;
-                }
+                    found_main = true;
+                });
             }
-        }
+        });
+        if (found_main) return;
     }
 }
 
@@ -1181,7 +1192,7 @@ void Analyzer::propagate_interproc_types() {
         bool uses_rcx = false, uses_rdx = false, uses_r8 = false, uses_r9 = false;
 
         for (auto& [ba, bb] : func.blocks) {
-            for (auto& insn : bb.insns) {
+            db_.for_each_insn_in_block(bb, [&](const Insn& insn) {
                 for (u8 i = 0; i < insn.op_count; ++i) {
                     if (insn.ops[i].type == OpType::Reg) {
                         if (insn.ops[i].reg == 1) uses_rcx = true;
@@ -1190,7 +1201,7 @@ void Analyzer::propagate_interproc_types() {
                         if (insn.ops[i].reg == 9) uses_r9 = true;
                     }
                 }
-            }
+            });
         }
 
         if (uses_r9) param_reg_count = 4;
@@ -1213,19 +1224,19 @@ void Analyzer::propagate_interproc_types() {
     for (auto& [entry, func] : db_.funcs) {
         if (!func.analyzed) continue;
         for (auto& [ba, bb] : func.blocks) {
-            for (auto& insn : bb.insns) {
-                if (!insn.is_call()) continue;
+            db_.for_each_insn_in_block(bb, [&](const Insn& insn) {
+                if (!insn.is_call()) return;
                 va_t target = insn.branch_target();
-                if (!target) continue;
+                if (!target) return;
                 auto sit = db_.signatures.find(target);
-                if (sit == db_.signatures.end()) continue;
+                if (sit == db_.signatures.end()) return;
                 auto& callee_sig = sit->second;
 
                 if (callee_sig.return_type != "int64_t") {
                     auto& caller_sig = db_.signatures[entry];
                     (void)caller_sig;
                 }
-            }
+            });
         }
     }
 

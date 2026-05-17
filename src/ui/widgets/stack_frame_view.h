@@ -17,7 +17,7 @@ struct StackFrame {
     std::map<i64, StackVar> vars;
     i64                     frame_size = 0;
 
-    void analyze(const Function& func);
+    void analyze(const Function& func, const AnalysisDB& db);
     void rename(i64 offset, std::string new_name);
     const StackVar* find(i64 offset) const;
 };

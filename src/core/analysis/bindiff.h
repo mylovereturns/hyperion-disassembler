@@ -19,8 +19,9 @@ public:
     std::vector<DiffResult> compare(const AnalysisDB& a, const AnalysisDB& b);
 
 private:
-    float compute_similarity(const Function& fa, const Function& fb);
-    std::vector<u8> func_bytes(const Function& f);
+    float compute_similarity(const Function& fa, const Function& fb,
+                             const AnalysisDB& da, const AnalysisDB& db);
+    std::vector<u8> func_bytes(const Function& f, const AnalysisDB& db);
 };
 
 }

@@ -133,7 +133,7 @@ bool CapstoneDisasm::decode(va_t addr, const u8* data, size_t len, Insn& out) {
 
     out.addr = addr;
     out.len = static_cast<u8>(insn->size);
-    std::memcpy(out.bytes, insn->bytes, (insn->size < 15) ? insn->size : 15);
+    std::memcpy(out.bytes, insn->bytes, std::min<size_t>(insn->size, sizeof(out.bytes)));
     out.set_mnemonic(insn->mnemonic);
     out.set_op_str(insn->op_str);
     out.mnemonic_id = static_cast<u16>(insn->id);
@@ -166,6 +166,7 @@ bool CapstoneDisasm::decode(va_t addr, const u8* data, size_t len, Insn& out) {
         out.op_count = 1;
     }
 
+    out.update_branch_target();
     cs_free(insn, count);
     return true;
 }

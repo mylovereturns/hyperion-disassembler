@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(Hyperion VERSION 0.1.6 LANGUAGES CXX)
+project(Hyperion VERSION 0.1.7 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -35,6 +35,10 @@ file(GLOB_RECURSE HYPERION_SOURCES
     "src/*.cpp"
     "src/*.h"
 )
+
+if(NOT WIN32)
+    list(FILTER HYPERION_SOURCES EXCLUDE REGEX "src/debugger/")
+endif()
 
 add_executable(${PROJECT_NAME} ${HYPERION_SOURCES})
 

@@ -31,7 +31,7 @@ std::string XrefsPanel::insn_text(va_t addr) const {
     if (!db_) return {};
     auto it = db_->insns.find(addr);
     if (it == db_->insns.end()) return {};
-    auto& insn = it->second;
+    auto& insn = *it;
     if (!insn.op_str[0]) return std::string(insn.mnemonic);
     return fmt::format("{} {}", insn.mnemonic, insn.op_str);
 }

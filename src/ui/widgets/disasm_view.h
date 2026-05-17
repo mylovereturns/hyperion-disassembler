@@ -6,6 +6,7 @@
 #include <imgui.h>
 #include <functional>
 #include <vector>
+#include <string>
 #include <unordered_set>
 #include <unordered_map>
 
@@ -13,6 +14,18 @@ namespace hype {
 
 class StackFrameView;
 class DebugEngine;
+
+struct CachedDataLine {
+    std::string label;
+    ImU32       color;
+    std::string name_comment;
+};
+
+struct CachedInsnLine {
+    char        hex[22];
+    std::string label;
+    std::string annotation;
+};
 
 class DisasmView {
 public:
@@ -40,6 +53,8 @@ public:
 
 private:
     void rebuild();
+    void rebuild_data_cache();
+    void rebuild_insn_cache();
     void render_line(int idx, const Insn& insn, float lh);
     void render_live_line(int idx, const Insn& insn, float lh);
     void render_data_line(const DataItem& item, float lh);
@@ -68,6 +83,10 @@ private:
     bool              live_mode_ = false;
     std::vector<Insn> live_insns_;
     va_t              live_base_ = 0;
+
+    std::unordered_map<va_t, CachedDataLine> data_cache_;
+    std::unordered_map<va_t, CachedInsnLine> insn_cache_;
+    std::unordered_map<va_t, std::string>    seg_hdr_cache_;
 };
 
 }

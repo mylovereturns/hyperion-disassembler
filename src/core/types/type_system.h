@@ -154,7 +154,8 @@ private:
 
     std::string format_enum(const TypeDef& td, const u8* data, size_t len) const {
         if (len < 4) return "?";
-        i64 val = *reinterpret_cast<const i32*>(data);
+        i32 raw; std::memcpy(&raw, data, 4);
+        i64 val = raw;
         for (auto& m : td.members)
             if (m.value == val) return fmt::format("{}::{} ({})", td.name, m.name, val);
         return fmt::format("{}({})", td.name, val);
@@ -165,23 +166,25 @@ private:
         switch (td.kind) {
         case TypeKind::UInt:
             if (td.size == 1) return fmt::format("0x{:02X}", data[0]);
-            if (td.size == 2) return fmt::format("0x{:04X}", *reinterpret_cast<const u16*>(data));
-            if (td.size == 4) return fmt::format("0x{:08X}", *reinterpret_cast<const u32*>(data));
-            if (td.size == 8) return fmt::format("0x{:016X}", *reinterpret_cast<const u64*>(data));
+            if (td.size == 2) { u16 v; std::memcpy(&v, data, 2); return fmt::format("0x{:04X}", v); }
+            if (td.size == 4) { u32 v; std::memcpy(&v, data, 4); return fmt::format("0x{:08X}", v); }
+            if (td.size == 8) { u64 v; std::memcpy(&v, data, 8); return fmt::format("0x{:016X}", v); }
             break;
         case TypeKind::Int:
             if (td.size == 1) return fmt::format("{}", static_cast<i8>(data[0]));
-            if (td.size == 2) return fmt::format("{}", *reinterpret_cast<const i16*>(data));
-            if (td.size == 4) return fmt::format("{}", *reinterpret_cast<const i32*>(data));
-            if (td.size == 8) return fmt::format("{}", *reinterpret_cast<const i64*>(data));
+            if (td.size == 2) { i16 v; std::memcpy(&v, data, 2); return fmt::format("{}", v); }
+            if (td.size == 4) { i32 v; std::memcpy(&v, data, 4); return fmt::format("{}", v); }
+            if (td.size == 8) { i64 v; std::memcpy(&v, data, 8); return fmt::format("{}", v); }
             break;
         case TypeKind::Float:
-            if (td.size == 4) return fmt::format("{:.6g}", *reinterpret_cast<const float*>(data));
-            if (td.size == 8) return fmt::format("{:.12g}", *reinterpret_cast<const double*>(data));
+            if (td.size == 4) { float v; std::memcpy(&v, data, 4); return fmt::format("{:.6g}", v); }
+            if (td.size == 8) { double v; std::memcpy(&v, data, 8); return fmt::format("{:.12g}", v); }
             break;
         default: break;
         }
-        return fmt::format("0x{:X}", *reinterpret_cast<const u32*>(data));
+        u64 v = 0;
+        std::memcpy(&v, data, std::min<size_t>(td.size, sizeof(v)));
+        return fmt::format("0x{:X}", v);
     }
 
     std::unordered_map<u32, TypeDef> types_;

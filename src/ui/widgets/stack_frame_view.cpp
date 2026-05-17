@@ -5,22 +5,22 @@
 
 namespace hype {
 
-void StackFrame::analyze(const Function& func) {
+void StackFrame::analyze(const Function& func, const AnalysisDB& db) {
     func_entry = func.entry;
     vars.clear();
     frame_size = 0;
 
     for (auto& [ba, bb] : func.blocks) {
-        for (auto& insn : bb.insns) {
+        db.for_each_insn_in_block(bb, [&](const Insn& insn) {
             for (u8 k = 0; k < insn.op_count; ++k) {
                 auto& op = insn.ops[k];
                 if (op.type != OpType::Mem) continue;
 
-                bool is_rsp = op.mem.base == ZYDIS_REGISTER_RSP || op.mem.base == ZYDIS_REGISTER_ESP;
-                bool is_rbp = op.mem.base == ZYDIS_REGISTER_RBP || op.mem.base == ZYDIS_REGISTER_EBP;
+                bool is_rsp = op.mem_base == ZYDIS_REGISTER_RSP || op.mem_base == ZYDIS_REGISTER_ESP;
+                bool is_rbp = op.mem_base == ZYDIS_REGISTER_RBP || op.mem_base == ZYDIS_REGISTER_EBP;
                 if (!is_rsp && !is_rbp) continue;
 
-                i64 disp = op.mem.disp;
+                i64 disp = op.mem_disp;
                 if (vars.count(disp)) continue;
 
                 u16 sz = op.size ? op.size / 8 : 8;
@@ -41,7 +41,7 @@ void StackFrame::analyze(const Function& func) {
 
                 vars[disp] = {disp, name, sz, 0};
             }
-        }
+        });
     }
 
     i64 min_off = 0;
@@ -73,7 +73,7 @@ void StackFrameView::set_function(va_t entry) {
         auto fit = db_->funcs.find(entry);
         if (fit != db_->funcs.end()) {
             StackFrame sf;
-            sf.analyze(fit->second);
+            sf.analyze(fit->second, *db_);
             frames_[entry] = std::move(sf);
         }
     }
@@ -179,16 +179,16 @@ std::string format_operand_with_vars(const Insn& insn, const StackFrame* frame) 
         auto& op = insn.ops[k];
         if (op.type != OpType::Mem) continue;
 
-        bool is_rsp = op.mem.base == ZYDIS_REGISTER_RSP || op.mem.base == ZYDIS_REGISTER_ESP;
-        bool is_rbp = op.mem.base == ZYDIS_REGISTER_RBP || op.mem.base == ZYDIS_REGISTER_EBP;
+        bool is_rsp = op.mem_base == ZYDIS_REGISTER_RSP || op.mem_base == ZYDIS_REGISTER_ESP;
+        bool is_rbp = op.mem_base == ZYDIS_REGISTER_RBP || op.mem_base == ZYDIS_REGISTER_EBP;
         if (!is_rsp && !is_rbp) continue;
 
-        i64 disp = op.mem.disp;
+        i64 disp = op.mem_disp;
         auto* var = frame->find(disp);
         if (!var) continue;
 
-        const char* base_name = is_rsp ? (op.mem.base == ZYDIS_REGISTER_ESP ? "esp" : "rsp")
-                                       : (op.mem.base == ZYDIS_REGISTER_EBP ? "ebp" : "rbp");
+        const char* base_name = is_rsp ? (op.mem_base == ZYDIS_REGISTER_ESP ? "esp" : "rsp")
+                                       : (op.mem_base == ZYDIS_REGISTER_EBP ? "ebp" : "rbp");
 
         if (disp > 0) {
             auto hex_pat = fmt::format("[{}+0x{:X}]", base_name, disp);

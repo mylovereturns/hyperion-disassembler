@@ -158,13 +158,13 @@ int l_get_insn(lua_State* L) {
     if (it == db->insns.end()) { lua_pushnil(L); return 1; }
 
     lua_newtable(L);
-    lua_pushstring(L, it->second.mnemonic);
+    lua_pushstring(L, it->mnemonic);
     lua_setfield(L, -2, "mnemonic");
-    lua_pushstring(L, it->second.op_str);
+    lua_pushstring(L, it->op_str);
     lua_setfield(L, -2, "op_str");
-    lua_pushinteger(L, it->second.len);
+    lua_pushinteger(L, it->len);
     lua_setfield(L, -2, "len");
-    lua_pushinteger(L, static_cast<lua_Integer>(it->second.addr));
+    lua_pushinteger(L, static_cast<lua_Integer>(it->addr));
     lua_setfield(L, -2, "addr");
     return 1;
 }

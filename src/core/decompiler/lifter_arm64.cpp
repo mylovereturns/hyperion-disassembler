@@ -398,8 +398,9 @@ void LifterARM64::lift_insn(const Insn& insn, PcodeBlock& blk, const AnalysisDB&
 
 void LifterARM64::lift_block(const BasicBlock& bb, const AnalysisDB& db, PcodeBlock& out) {
     out.addr = bb.start;
-    for (auto& insn : bb.insns)
+    db.for_each_insn_in_block(bb, [&](const Insn& insn) {
         lift_insn(insn, out, db);
+    });
 }
 
 PcodeFunc LifterARM64::lift(const Function& func, const AnalysisDB& db) {

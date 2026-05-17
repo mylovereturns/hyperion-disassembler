@@ -27,7 +27,6 @@ struct DataItem {
 struct BasicBlock {
     va_t              start;
     va_t              end;
-    std::vector<Insn> insns;
     std::vector<va_t> succs;
     std::vector<va_t> preds;
 };
@@ -77,7 +76,7 @@ struct FuncSignature {
 
 struct AnalysisDB {
     va_t                                        image_base = 0;
-    std::unordered_map<va_t, Insn>              insns;
+    InsnStore                                   insns;
     std::unordered_map<va_t, Function>          funcs;
     std::vector<Xref>                           xrefs;
     std::unordered_map<va_t, std::vector<Xref>> xrefs_to;
@@ -141,6 +140,23 @@ struct AnalysisDB {
     void patch_nop(va_t addr, u8 len) {
         std::lock_guard lk(mtx);
         patches[addr] = std::vector<u8>(len, 0x90);
+    }
+
+    template<typename Fn>
+    void for_each_insn_in_block(const BasicBlock& bb, Fn&& fn) const {
+        auto it = insns.range_begin(bb.start);
+        auto end = insns.range_end(bb.end);
+        for (; it != end; ++it)
+            fn(*it);
+    }
+
+    template<typename Fn>
+    bool for_each_insn_in_block_break(const BasicBlock& bb, Fn&& fn) const {
+        auto it = insns.range_begin(bb.start);
+        auto end = insns.range_end(bb.end);
+        for (; it != end; ++it)
+            if (fn(*it)) return true;
+        return false;
     }
 };
 

@@ -40,7 +40,8 @@ void DiffView::render() {
         ImGui::TableHeadersRow();
 
         std::string filt(filter_);
-        std::transform(filt.begin(), filt.end(), filt.begin(), ::tolower);
+        std::transform(filt.begin(), filt.end(), filt.begin(),
+            [](unsigned char c) { return std::tolower(c); });
 
         for (auto& r : results_) {
             if (r.status == DiffResult::Identical && !show_identical_) continue;
@@ -50,7 +51,8 @@ void DiffView::render() {
 
             if (!filt.empty()) {
                 std::string ln = r.name;
-                std::transform(ln.begin(), ln.end(), ln.begin(), ::tolower);
+                std::transform(ln.begin(), ln.end(), ln.begin(),
+                    [](unsigned char c) { return std::tolower(c); });
                 if (ln.find(filt) == std::string::npos) continue;
             }
 

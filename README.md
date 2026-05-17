@@ -3,16 +3,16 @@
 A native multi-architecture disassembler and binary analysis tool. Supports PE, ELF, Mach-O, and .NET binaries across x86, x64, ARM, ARM64, MIPS, and PPC. Built from scratch in C++20 with ImGui.
 
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?logo=discord)](https://discord.gg/yjym2b7A)
-[![GitHub](https://img.shields.io/github/stars/mylovereturns/hyperion-disassembler?style=flat&label=Stars)](https://github.com/mylovereturns/hyperion-disassembler)
+[![GitHub](https://img.shields.io/github/stars/Sidenai/hyperion-disassembler?style=flat&label=Stars)](https://github.com/Sidenai/hyperion-disassembler)
 
-Single statically-linked executable. No installer, no runtime dependencies. Under 3MB.
+Single statically-linked executable. No installer, no runtime dependencies. Under 4MB.
 
 <img width="3436" height="1362" alt="image" src="https://github.com/user-attachments/assets/89ffa137-ed79-4d6a-b9a6-61324192916b" />
 
 ## Community
 
 - [Discord](https://discord.gg/yjym2b7A)
-- [GitHub](https://github.com/mylovereturns/hyperion-disassembler)
+- [GitHub](https://github.com/Sidenai/hyperion-disassembler)
 
 ## Supported Formats & Architectures
 
@@ -93,12 +93,14 @@ Disassembly: Zydis (x86/x64) + Capstone (ARM, ARM64, MIPS, PPC)
 - Copy as C array / Python / YARA
 
 **Stability**
-- PE loader hardened against malformed binaries
+- All loaders hardened against malformed/malicious binaries (bounds checks, null-termination, overflow guards)
 - Thread-safe analysis (atomic handoff to UI)
-- Memory optimized (fixed-size instruction buffers, section limits)
+- Memory optimized (compact instruction storage, flat sorted vectors, zero per-frame allocations)
 - Full undo/redo for all operations
 - Auto-save every 60 seconds
 - Crash-free on minimize/unfocus
+- GPU-accelerated entropy heatmap (single texture draw call)
+- Resilient settings/database loading (graceful handling of corrupt files)
 
 ## Keybinds
 
@@ -133,7 +135,7 @@ All keybinds are customizable via Settings.
 
 Requires CMake 3.25+, vcpkg, C++20 compiler (MSVC 2022+, GCC 13+, or Clang 16+).
 
-```
+```bash
 git clone https://github.com/Sidenai/hyperion-disassembler
 cd hyperion-disassembler
 cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
@@ -141,8 +143,16 @@ cmake --build build --config Release
 ```
 
 For static linking (single exe, no DLLs):
-```
+```bash
 cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=path/to/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static
+cmake --build build --config Release
+```
+
+On macOS with Ninja (recommended):
+```bash
+brew install cmake ninja pkg-config
+git clone https://github.com/microsoft/vcpkg.git ~/.vcpkg && ~/.vcpkg/bootstrap-vcpkg.sh
+cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=~/.vcpkg/scripts/buildsystems/vcpkg.cmake -G Ninja
 cmake --build build --config Release
 ```
 
@@ -161,10 +171,13 @@ Dependencies (pulled via vcpkg): imgui (docking), glfw, zydis, capstone, spdlog,
 Active development. Functional for static analysis across all supported formats. Decompiler produces readable C output for x86/x64 and ARM64. RTTI class recovery works on unobfuscated C++ binaries.
 
 Roadmap:
-- Debugger integration (attach, breakpoints, anti-detection)
+- Debugger integration (attach, breakpoints, anti-detection) — Windows only, in progress
 - Collaborative analysis
 - More decompiler improvements
+- RISC-V support
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE)
+
+Copyright (c) 2026 - present Siden Technologies Inc.

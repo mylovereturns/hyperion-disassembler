@@ -232,6 +232,7 @@ void Settings::load(const std::filesystem::path& path) {
         auto v = trim(line.substr(eq + 1));
 
         if (section == "appearance") {
+            try {
             if (k == "font_size") font_size = std::stof(v);
             else if (k == "theme") theme_index = std::stoi(v);
             else if (k == "accent_r") accent_color[0] = std::stof(v);
@@ -257,17 +258,22 @@ void Settings::load(const std::filesystem::path& path) {
             else if (k == "border_radius") border_radius = std::stof(v);
             else if (k == "scrollbar_width") scrollbar_width = std::stof(v);
             else if (k == "font_index") font_index = std::stoi(v);
+            } catch (...) {}
         } else if (section == "editor") {
+            try {
             if (k == "show_bytes") show_bytes = (v == "true" || v == "1");
             else if (k == "max_bytes") max_bytes = std::stoi(v);
             else if (k == "address_width") address_width = std::stoi(v);
             else if (k == "tab_size") tab_size = std::stoi(v);
             else if (k == "auto_beautify") auto_beautify = (v == "true" || v == "1");
             else if (k == "mono_font_path") std::strncpy(mono_font_path, v.c_str(), sizeof(mono_font_path) - 1);
+            } catch (...) {}
         } else if (section == "advanced") {
+            try {
             if (k == "threads") max_threads = std::stoi(v);
             else if (k == "autosave_interval") autosave_interval = std::stoi(v);
             else if (k == "max_decompiler_blocks") max_decompiler_blocks = std::stoi(v);
+            } catch (...) {}
         }
     }
 }

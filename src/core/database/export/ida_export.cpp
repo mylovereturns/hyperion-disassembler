@@ -5,6 +5,21 @@
 
 namespace hype {
 
+namespace {
+std::string escape_py(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (char c : s) {
+        if (c == '\'') out += "\\'";
+        else if (c == '\\') out += "\\\\";
+        else if (c == '\n') out += "\\n";
+        else if (c == '\r') out += "\\r";
+        else out += c;
+    }
+    return out;
+}
+}
+
 bool IDAExport::write(const std::filesystem::path& path, const PEImage& img, const AnalysisDB& db) {
     std::ofstream f(path);
     if (!f) { spdlog::error("cannot write: {}", path.string()); return false; }
@@ -16,21 +31,18 @@ bool IDAExport::write(const std::filesystem::path& path, const PEImage& img, con
     for (auto& [entry, func] : db.funcs) {
         f << fmt::format("ida_funcs.add_func(0x{:X})\n", entry);
         if (!func.name.empty() && func.name.substr(0, 4) != "sub_")
-            f << fmt::format("ida_name.set_name(0x{:X}, '{}', ida_name.SN_FORCE)\n", entry, func.name);
+            f << fmt::format("ida_name.set_name(0x{:X}, '{}', ida_name.SN_FORCE)\n", entry, escape_py(func.name));
     }
 
     f << "\n";
     for (auto& [addr, name] : db.names) {
         if (name.substr(0, 4) == "sub_") continue;
-        f << fmt::format("ida_name.set_name(0x{:X}, '{}', ida_name.SN_FORCE)\n", addr, name);
+        f << fmt::format("ida_name.set_name(0x{:X}, '{}', ida_name.SN_FORCE)\n", addr, escape_py(name));
     }
 
     f << "\n";
     for (auto& [addr, cmt] : db.comments) {
-        std::string escaped = cmt;
-        for (size_t pos = 0; (pos = escaped.find('\'', pos)) != std::string::npos; pos += 2)
-            escaped.replace(pos, 1, "\\'");
-        f << fmt::format("idc.set_cmt(0x{:X}, '{}', 0)\n", addr, escaped);
+        f << fmt::format("idc.set_cmt(0x{:X}, '{}', 0)\n", addr, escape_py(cmt));
     }
 
     f << "\nprint('[Hyperion] done')\n";
