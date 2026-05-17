@@ -424,7 +424,7 @@ void App::open_file(const char* path) {
         out_.log("Detected Mach-O binary (macOS)");
         result = macho_loader_.load(path);
         return;
-    } else
+    } else {
         out_.log("ERROR: unsupported file format (expected PE or ELF)");
         return;
     }
