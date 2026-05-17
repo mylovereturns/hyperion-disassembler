@@ -134,7 +134,7 @@ All keybinds are customizable via Settings.
 Requires CMake 3.25+, vcpkg, C++20 compiler (MSVC 2022+, GCC 13+, or Clang 16+).
 
 ```
-git clone https://github.com/mylovereturns/hyperion-disassembler
+git clone https://github.com/Sidenai/hyperion-disassembler
 cd hyperion-disassembler
 cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
 cmake --build build --config Release
