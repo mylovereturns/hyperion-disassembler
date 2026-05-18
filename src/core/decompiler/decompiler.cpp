@@ -38,17 +38,16 @@ std::vector<PseudoLine> Decompiler::decompile(const Function& func, const Analys
     }
 
     PcodeFunc pf;
-    bool is_arm64 = false;
-    for (auto& [ba, bb] : func.blocks) {
-        if (!bb.insns.empty() && bb.insns[0].len == 4) {
-            is_arm64 = true;
-            break;
-        }
-    }
-    if (is_arm64)
+    if (db.arch == Arch::ARM64)
         pf = arm64_lifter_.lift(func, db);
-    else
+    else if (db.arch == Arch::ARM)
+        pf = arm_lifter_.lift(func, db);
+    else if (db.arch == Arch::X64 || db.arch == Arch::X86)
         pf = lifter_.lift(func, db);
+    else {
+        // Fallback for other architectures or unsupported ones
+        return {{0, fmt::format("// architecture not supported in decompiler yet"), func.entry}};
+    }
     ssa_.build(pf);
     dce_.run(pf);
     prop_.run(pf);

@@ -34,6 +34,7 @@ find_package(Lua REQUIRED)
 file(GLOB_RECURSE HYPERION_SOURCES
     "src/*.cpp"
     "src/*.h"
+    "src/*.hpp"
 )
 
 add_executable(${PROJECT_NAME} ${HYPERION_SOURCES})

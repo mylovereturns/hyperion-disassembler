@@ -70,8 +70,8 @@ bool Disassembler::decode(va_t addr, const u8* data, size_t len, Insn& out) {
         return false;
 
     out.addr = addr;
-    out.len = zi.length;
-    out.mnemonic_id = zi.mnemonic;
+    out.len = static_cast<u8>(zi.length);
+    out.mnemonic_id = static_cast<u16>(zi.mnemonic);
     out.type = classify(zi.mnemonic);
     std::memcpy(out.bytes, data, zi.length);
 
@@ -98,7 +98,7 @@ bool Disassembler::decode(va_t addr, const u8* data, size_t len, Insn& out) {
         switch (zop.type) {
         case ZYDIS_OPERAND_TYPE_REGISTER:
             op.type = OpType::Reg;
-            op.reg = zop.reg.value;
+            op.reg = static_cast<u16>(zop.reg.value);
             break;
         case ZYDIS_OPERAND_TYPE_IMMEDIATE:
             op.type = OpType::Imm;
@@ -109,8 +109,8 @@ bool Disassembler::decode(va_t addr, const u8* data, size_t len, Insn& out) {
             break;
         case ZYDIS_OPERAND_TYPE_MEMORY:
             op.type = OpType::Mem;
-            op.mem.base = zop.mem.base;
-            op.mem.index = zop.mem.index;
+            op.mem.base = static_cast<u16>(zop.mem.base);
+            op.mem.index = static_cast<u16>(zop.mem.index);
             op.mem.scale = zop.mem.scale;
             op.mem.disp = zop.mem.disp.value;
             if (zop.mem.base == ZYDIS_REGISTER_RIP || zop.mem.base == ZYDIS_REGISTER_EIP)

@@ -1,6 +1,6 @@
-#define NOMINMAX
 #include "settings_panel.h"
 #include "ui/theme.h"
+#include "ui/ui_utils.h"
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <fmt/format.h>
@@ -24,7 +24,6 @@
 
 #ifdef _WIN32
 #include <windows.h>
-#include <commdlg.h>
 #include <GL/gl.h>
 #ifndef GL_CLAMP_TO_EDGE
 #define GL_CLAMP_TO_EDGE 0x812F
@@ -36,13 +35,7 @@ namespace hype {
 namespace {
 
 std::filesystem::path exe_directory() {
-#ifdef _WIN32
-    char buf[MAX_PATH] = {};
-    GetModuleFileNameA(nullptr, buf, MAX_PATH);
-    return std::filesystem::path(buf).parent_path();
-#else
-    return std::filesystem::current_path();
-#endif
+    return ui::get_exe_directory();
 }
 
 std::string trim(const std::string& s) {
@@ -52,37 +45,17 @@ std::string trim(const std::string& s) {
     return s.substr(b, e - b + 1);
 }
 
-#ifdef _WIN32
 std::string file_dialog_hth(bool save) {
-    char path[MAX_PATH] = {};
-    OPENFILENAMEA ofn{};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.lpstrFilter = "Hyperion Theme\0*.hth\0All Files\0*.*\0";
-    ofn.lpstrFile = path;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrDefExt = "hth";
     if (save) {
-        ofn.Flags = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
-        if (GetSaveFileNameA(&ofn)) return path;
+        return ui::save_file_dialog("Export Theme", "Hyperion Theme|*.hth", "hth");
     } else {
-        ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-        if (GetOpenFileNameA(&ofn)) return path;
+        return ui::open_file_dialog("Import Theme", "Hyperion Theme|*.hth");
     }
-    return {};
 }
 
 std::string file_dialog_image() {
-    char path[MAX_PATH] = {};
-    OPENFILENAMEA ofn{};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.lpstrFilter = "Images\0*.png;*.jpg;*.jpeg;*.bmp\0All Files\0*.*\0";
-    ofn.lpstrFile = path;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-    if (GetOpenFileNameA(&ofn)) return path;
-    return {};
+    return ui::open_file_dialog("Select Background Image", "Images|*.png;*.jpg;*.jpeg;*.bmp");
 }
-#endif
 
 struct KeyNamePair { ImGuiKey key; const char* name; };
 static const KeyNamePair g_key_table[] = {
@@ -401,17 +374,9 @@ void SettingsPanel::clear_bg_image() {
 
 void SettingsPanel::scan_system_fonts() {
     available_fonts_.clear();
-    struct Candidate { const char* name; const char* file; };
-    static constexpr Candidate candidates[] = {
-        {"Segoe UI",        "C:\\Windows\\Fonts\\segoeui.ttf"},
-        {"Consolas",        "C:\\Windows\\Fonts\\consola.ttf"},
-        {"Cascadia Code",   "C:\\Windows\\Fonts\\CascadiaCode.ttf"},
-        {"JetBrains Mono",  "C:\\Windows\\Fonts\\JetBrainsMono-Regular.ttf"},
-        {"Fira Code",       "C:\\Windows\\Fonts\\FiraCode-Regular.ttf"},
-    };
-    for (auto& c : candidates) {
-        if (std::filesystem::exists(c.file))
-            available_fonts_.push_back({c.name, c.file});
+    auto fonts = ui::scan_system_fonts();
+    for (auto& f : fonts) {
+        available_fonts_.push_back({f.name, f.path});
     }
 }
 
@@ -564,10 +529,8 @@ void SettingsPanel::render_appearance_tab() {
             ImGui::Text("%s (%dx%d)", fname.c_str(), bg_width_, bg_height_);
         }
         if (ImGui::Button("Browse...")) {
-#ifdef _WIN32
             auto p = file_dialog_image();
             if (!p.empty()) { load_bg_image(p); save_all(); }
-#endif
         }
         ImGui::SameLine();
         if (ImGui::Button("Clear") && bg_texture_) { clear_bg_image(); save_all(); }
@@ -655,14 +618,11 @@ void SettingsPanel::render_appearance_tab() {
     ImGui::Spacing(); ImGui::Spacing();
     ImGui::SeparatorText("Theme Files");
     if (ImGui::Button("Export Theme (.hth)")) {
-#ifdef _WIN32
         auto p = file_dialog_hth(true);
         if (!p.empty()) custom_colors_.export_hth(p);
-#endif
     }
     ImGui::SameLine();
     if (ImGui::Button("Import Theme (.hth)")) {
-#ifdef _WIN32
         auto p = file_dialog_hth(false);
         if (!p.empty() && custom_colors_.import_hth(p)) {
             settings_.accent_color[0] = custom_colors_.accent[0];
@@ -679,7 +639,6 @@ void SettingsPanel::render_appearance_tab() {
             theme_changed_ = true;
             save_all();
         }
-#endif
     }
 
     ImGui::Spacing(); ImGui::Spacing();

@@ -27,3 +27,12 @@ hyperion_layout.ini
 imgui.ini
 CONTRIBUTING.md
 SKILL.md
+
+# vcpkg
+vcpkg_installed/
+vcpkg-manifest-install.log
+vcpkg-configuration.json
+*.hdb
+hyperion_recent.txt
+hyperion_settings.ini
+hyperion_keybinds.ini

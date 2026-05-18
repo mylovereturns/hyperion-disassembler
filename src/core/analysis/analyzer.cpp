@@ -49,6 +49,7 @@ Analyzer::Analyzer(PEImage& img, WorkerPool& pool)
     disasm_.set_arch(img.arch);
     cap_disasm_.set_arch(img.arch);
     db_.image_base = img.base;
+    db_.arch = img.arch;
 }
 
 const u8* Analyzer::va_to_ptr(va_t addr, size_t* max_len) {

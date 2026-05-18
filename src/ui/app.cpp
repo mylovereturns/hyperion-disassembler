@@ -1,7 +1,7 @@
-#define NOMINMAX
 #include "app.h"
 #include "ui/theme.h"
 #include "ui/fonts.h"
+#include "ui/ui_utils.h"
 #include "core/analysis/packer_detect.h"
 #include "core/loader/dotnet_loader.h"
 #include <imgui.h>
@@ -15,90 +15,17 @@
 
 #ifdef _WIN32
 #include <windows.h>
-#include <commdlg.h>
 #endif
 
 namespace hype {
 
 namespace {
 std::string open_dialog() {
-#ifdef _WIN32
-    char path[MAX_PATH] = {};
-    OPENFILENAMEA ofn{};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.lpstrFilter = "All Binaries\0*.exe;*.dll;*.sys;*.so;*.dylib;*.elf;*.bin;*.o\0All Files\0*.*\0";
-    ofn.lpstrFile = path;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-    if (GetOpenFileNameA(&ofn)) return path;
-#elif defined(__APPLE__)
-    FILE* f = popen("osascript -e 'POSIX path of (choose file with prompt \"Open Binary\")'", "r");
-    if (f) {
-        char buf[1024] = {};
-        if (fgets(buf, sizeof(buf), f)) {
-            pclose(f);
-            std::string result(buf);
-            while (!result.empty() && (result.back() == '\n' || result.back() == '\r'))
-                result.pop_back();
-            return result;
-        }
-        pclose(f);
-    }
-#else
-    FILE* f = popen("zenity --file-selection --title='Open Binary' 2>/dev/null || kdialog --getopenfilename . 2>/dev/null", "r");
-    if (f) {
-        char buf[1024] = {};
-        if (fgets(buf, sizeof(buf), f)) {
-            pclose(f);
-            std::string result(buf);
-            while (!result.empty() && (result.back() == '\n' || result.back() == '\r'))
-                result.pop_back();
-            return result;
-        }
-        pclose(f);
-    }
-#endif
-    return {};
+    return ui::open_file_dialog("Open Binary", "All Binaries|*.exe;*.dll;*.sys;*.so;*.dylib;*.elf;*.bin;*.o");
 }
 
 std::string save_dialog() {
-#ifdef _WIN32
-    char path[MAX_PATH] = {};
-    OPENFILENAMEA ofn{};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.lpstrFilter = "All Binaries\0*.exe;*.dll;*.sys;*.so;*.dylib;*.elf;*.bin;*.o\0All Files\0*.*\0";
-    ofn.lpstrFile = path;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
-    if (GetSaveFileNameA(&ofn)) return path;
-#elif defined(__APPLE__)
-    FILE* f = popen("osascript -e 'POSIX path of (choose file name with prompt \"Save As\")'", "r");
-    if (f) {
-        char buf[1024] = {};
-        if (fgets(buf, sizeof(buf), f)) {
-            pclose(f);
-            std::string result(buf);
-            while (!result.empty() && (result.back() == '\n' || result.back() == '\r'))
-                result.pop_back();
-            return result;
-        }
-        pclose(f);
-    }
-#else
-    FILE* f = popen("zenity --file-selection --save --title='Save As' 2>/dev/null || kdialog --getsavefilename . 2>/dev/null", "r");
-    if (f) {
-        char buf[1024] = {};
-        if (fgets(buf, sizeof(buf), f)) {
-            pclose(f);
-            std::string result(buf);
-            while (!result.empty() && (result.back() == '\n' || result.back() == '\r'))
-                result.pop_back();
-            return result;
-        }
-        pclose(f);
-    }
-#endif
-    return {};
+    return ui::save_file_dialog("Save As", "All Binaries|*.exe;*.dll;*.sys;*.so;*.dylib;*.elf;*.bin;*.o");
 }
 }
 
@@ -422,7 +349,7 @@ void App::open_file(const char* path) {
                magic == 0xCEFAEDFE || magic == 0xCFAFFEED) {
         out_.log("Detected Mach-O binary (macOS)");
         result = macho_loader_.load(path);
-    } else
+    } else {
         out_.log("ERROR: unsupported file format (expected PE or ELF)");
         return;
     }

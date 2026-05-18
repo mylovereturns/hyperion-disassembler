@@ -1,6 +1,7 @@
 #pragma once
 #include "core/decompiler/lifter.h"
 #include "core/decompiler/lifter_arm64.h"
+#include "core/decompiler/lifter_arm.h"
 #include "core/decompiler/ssa.h"
 #include "core/decompiler/dce.h"
 #include "core/decompiler/propagate.h"
@@ -20,6 +21,7 @@ public:
 private:
     Lifter      lifter_;
     LifterARM64 arm64_lifter_;
+    LifterARM   arm_lifter_;
     SSABuilder  ssa_;
     DCE         dce_;
     Propagate   prop_;

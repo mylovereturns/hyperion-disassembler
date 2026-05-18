@@ -6,7 +6,7 @@
 
 namespace hype {
 
-class LifterARM64 {
+class LifterARM {
 public:
     PcodeFunc lift(const Function& func, const AnalysisDB& db);
 
@@ -18,7 +18,7 @@ private:
     Varnode operand_read(const Insn& insn, int idx, PcodeBlock& out);
     void operand_write(const Insn& insn, int idx, Varnode val, PcodeBlock& out);
     
-    Varnode alloc_temp(int sz = 8);
+    Varnode alloc_temp(int sz = 4);
     void emit(PcodeBlock& b, PcodeOp op, Varnode out, std::vector<Varnode> in, va_t a = 0);
 
     int next_temp_ = 256;

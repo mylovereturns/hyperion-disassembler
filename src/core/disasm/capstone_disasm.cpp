@@ -159,11 +159,71 @@ bool CapstoneDisasm::decode(va_t addr, const u8* data, size_t len, Insn& out) {
     out.type = t;
 
     out.op_count = 0;
-    va_t target = extract_branch_target(insn, impl_->arch);
-    if (target && (t == InsnType::Call || t == InsnType::Jmp || t == InsnType::Jcc)) {
-        out.ops[0].type = OpType::Imm;
-        out.ops[0].val = target;
-        out.op_count = 1;
+    if (insn->detail) {
+        cs_detail* d = insn->detail;
+        if (impl_->arch == Arch::ARM64) {
+            auto& arm64 = d->arm64;
+            out.op_count = arm64.op_count;
+            for (u8 i = 0; i < arm64.op_count && i < 4; ++i) {
+                auto& cop = arm64.operands[i];
+                auto& oop = out.ops[i];
+                switch (cop.type) {
+                case ARM64_OP_REG:
+                    oop.type = OpType::Reg;
+                    oop.reg = static_cast<u16>(cop.reg);
+                    break;
+                case ARM64_OP_IMM:
+                    oop.type = OpType::Imm;
+                    oop.val = static_cast<u64>(cop.imm);
+                    break;
+                case ARM64_OP_MEM:
+                    oop.type = OpType::Mem;
+                    oop.mem.base = static_cast<u16>(cop.mem.base);
+                    oop.mem.index = static_cast<u16>(cop.mem.index);
+                    oop.mem.disp = cop.mem.disp;
+                    break;
+                default:
+                    oop.type = OpType::None;
+                    break;
+                }
+            }
+        } else if (impl_->arch == Arch::ARM) {
+            auto& arm = d->arm;
+            out.op_count = arm.op_count;
+            for (u8 i = 0; i < arm.op_count && i < 4; ++i) {
+                auto& cop = arm.operands[i];
+                auto& oop = out.ops[i];
+                switch (cop.type) {
+                case ARM_OP_REG:
+                    oop.type = OpType::Reg;
+                    oop.reg = static_cast<u16>(cop.reg);
+                    break;
+                case ARM_OP_IMM:
+                    oop.type = OpType::Imm;
+                    oop.val = static_cast<u64>(cop.imm);
+                    break;
+                case ARM_OP_MEM:
+                    oop.type = OpType::Mem;
+                    oop.mem.base = static_cast<u16>(cop.mem.base);
+                    oop.mem.index = static_cast<u16>(cop.mem.index);
+                    oop.mem.disp = cop.mem.disp;
+                    break;
+                default:
+                    oop.type = OpType::None;
+                    break;
+                }
+            }
+        }
+        // Add more architectures here as needed
+    }
+
+    if (out.op_count == 0) {
+        va_t target = extract_branch_target(insn, impl_->arch);
+        if (target && (t == InsnType::Call || t == InsnType::Jmp || t == InsnType::Jcc)) {
+            out.ops[0].type = OpType::Imm;
+            out.ops[0].val = target;
+            out.op_count = 1;
+        }
     }
 
     cs_free(insn, count);

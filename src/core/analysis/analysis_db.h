@@ -76,6 +76,7 @@ struct FuncSignature {
 };
 
 struct AnalysisDB {
+    Arch                                        arch = Arch::X64;
     va_t                                        image_base = 0;
     std::unordered_map<va_t, Insn>              insns;
     std::unordered_map<va_t, Function>          funcs;
